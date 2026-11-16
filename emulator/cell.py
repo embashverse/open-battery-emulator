@@ -208,12 +208,25 @@ def new_cell(battery: Battery, soc_pct: float) -> Cell:
 # --- 5. Each tick: OCV curve and SOC ------------------------------------------
 
 
-def update_cell(cell: Cell, current_a: float, dt_s: float) -> None:
-    """Move the cell forward by dt_s seconds with this current."""
+def update_cell(
+    cell: Cell,
+    current_a: float,
+    dt_s: float,
+    direction_current_a: float | None = None,
+) -> None:
+    """Move the cell forward by dt_s seconds with this current.
+
+    The sign of direction_current_a picks the OCV curve. pack.py passes the pack
+    current here, so a circulating current between strings never flips the curve.
+    Left out, the cell's own current picks the curve.
+    """
+    if direction_current_a is None:
+        direction_current_a = current_a
+
     # Pick the OCV curve by current direction. At 0 A keep the last one.
-    if current_a > 0:
+    if direction_current_a > 0:
         cell.ocv_curve = DISCHARGE
-    elif current_a < 0:
+    elif direction_current_a < 0:
         cell.ocv_curve = CHARGE
 
     # Coulomb counting: amp hours taken out, as a percent of capacity.

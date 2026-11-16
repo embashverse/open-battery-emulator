@@ -9,10 +9,17 @@ start:
   soc: 80                  # percent
   temperature_c: 25
 
+variation:                 # natural spread between cells, all 0 = identical cells
+  capacity_pct: 2          # each cell's capacity within +-2 % of the battery file
+  r0_pct: 5                # each cell's R0 within +-5 % of the battery file
+  soc_pct: 1               # each cell's start SOC within +-1 SOC point
+  seed: 42                 # same seed = same pack every run
+
 current:
   source: simulated        # simulated, or the name of an interface (can)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
+  deadband_a: 0.5          # pack currents within +-0.5 A count as 0
 
 interfaces:
   can:

@@ -276,6 +276,22 @@ def test_ocv_curve_follows_current_direction_and_stays_at_idle(battery):
     assert cell.ocv_curve == DISCHARGE
 
 
+def test_direction_current_picks_the_curve_when_given(battery):
+    """Checks REQ-05: the pack current direction picks the curve, not the cell's."""
+    cell = new_cell(battery, soc_pct=50)
+    # The cell is charged by a circulating current while the pack is at 0 A.
+    update_cell(cell, current_a=-10, dt_s=0.1, direction_current_a=0)
+    assert cell.ocv_curve == DISCHARGE
+    assert cell.soc_pct > 50  # SOC still follows the cell's own current
+
+    # The pack discharges, but this cell is charged: still the discharge curve.
+    update_cell(cell, current_a=-10, dt_s=0.1, direction_current_a=20)
+    assert cell.ocv_curve == DISCHARGE
+
+    update_cell(cell, current_a=10, dt_s=0.1, direction_current_a=-20)
+    assert cell.ocv_curve == CHARGE
+
+
 def test_cell_voltage_is_ocv_minus_i_times_r0(battery):
     """Checks REQ-05."""
     cell = new_cell(battery, soc_pct=50)  # discharge curve, OCV 3.2 V at 0 degC
