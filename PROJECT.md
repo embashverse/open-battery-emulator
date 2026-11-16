@@ -85,6 +85,7 @@ current:
   source: simulated        # simulated, or the name of an interface (can)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
+  deadband_a: 0.5          # pack currents within +-0.5 A count as 0
 
 interfaces:
   can:
@@ -124,8 +125,9 @@ Every 100 ms:
 
 ```
 engine.py   get current (CAN or simulated)
+  pack.py     deadband: small currents count as 0
   pack.py     state machine: block current if FULL or EMPTY
-  pack.py     split current across strings
+  pack.py     split current across strings by resistance
     cell.py     update SOC of each cell
     cell.py     cell voltage = OCV(SOC) - I x R0
   pack.py     pack, string, module values, min and max cell, state
@@ -278,15 +280,23 @@ Pack
 - **REQ-04** Discharge current is positive. SOC is in percent everywhere (files, config,
   code). It changes by coulomb counting and stays between 0 and 100 %.
 - **REQ-05** Cell voltage = OCV(SOC, temperature) - I x R0, using the charge or discharge
-  OCV table by current direction as described in Battery files. Current splits equally
-  across strings.
+  OCV table by current direction as described in Battery files. The OCV curve of every
+  cell follows the direction of the pack current; at 0 A each cell keeps its last curve,
+  so circulating currents between strings never flip curves. Current splits between
+  parallel strings by resistance. All strings share one pack voltage:
+  V_pack = (Σ OCV_k/R_k − I_pack) / (Σ 1/R_k), and I_k = (OCV_k − V_pack) / R_k, where
+  OCV_k and R_k are the sums over the string's cells at the start of the tick. If any
+  string's R_k is 0, current splits equally.
 - **REQ-06** Allowed charge and discharge current per cell come from the limit tables at
-  the cell's SOC and the set temperature, interpolated in both.
+  the cell's SOC and the set temperature, interpolated in both. The pack charge and
+  discharge limits are P times the lowest cell limit; the temperature flag is set if any
+  cell is out of range.
 - **REQ-22** When the limit tables have two or more temperature columns, the first and last
   define the operating range. Outside it, both current limits are 0 and a temperature flag
   is set.
 - **REQ-20** Each cell gets its own capacity, R0 and start SOC, spread randomly around the
-  battery file values by the percentages in `variation`. The same seed gives the same
+  battery file values by the percentages in `variation`. Capacity and R0 spread by a
+  percent of the file value, SOC by SOC percentage points. The same seed gives the same
   pack every run. All percentages 0 gives identical cells.
 
 State
@@ -303,6 +313,9 @@ Current input
   100 ms.
 - **REQ-10** If the source is an interface and no current command arrives within
   `timeout_ms`, current is 0 and the timeout flag is set.
+- **REQ-24** Pack currents within ±`current.deadband_a` count as 0. The deadband is
+  applied once per tick in `pack.py` before anything else, and only to the pack current,
+  never to string currents.
 
 CAN
 - **REQ-11** Channel, bitrate and DBC file are set under `interfaces.can` in `config.yaml`.
@@ -364,6 +377,7 @@ Rules:
 ## Later
 
 Temperature model (temperature changing with current), fault injection, NMC and other
-batteries, per module capacity, load profiles from CSV, script that writes module frames
+batteries, gradual hysteresis transition (OCV moves from one curve to the other over a
+few % SOC instead of switching at once), per module capacity, load profiles from CSV, script that writes module frames
 into a DBC for decoding tools, UART interface, isoSPI interface (needs an LTC6820 type
 transceiver and tight timing, likely on an MCU rather than Linux), Modbus or MQTT for BESS.
