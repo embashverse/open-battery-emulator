@@ -1,0 +1,5 @@
+parameter,value,unit
+capacity,100,Ah
+r0,0.001,ohm
+v_min,2.50,V
+v_max,3.65,V

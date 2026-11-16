@@ -1,0 +1,35 @@
+battery: lfp_100ah
+
+pack:
+  cells_per_module: 12
+  modules_in_series: 8
+  strings_in_parallel: 2
+
+start:
+  soc: 0.8
+  temperature_c: 25
+
+current:
+  source: simulated        # simulated, or the name of an interface (can)
+  simulated_a: 50          # discharge positive
+  timeout_ms: 500
+
+interfaces:
+  can:
+    enabled: true
+    channel: vcan0         # can0 on the Pi
+    bitrate: 500000
+    dbc: interfaces/can/battery.dbc
+    module_frames:
+      base_id: 0x200
+      id_step: 0x10        # IDs per module
+      cells_per_frame: 4
+      cycle_ms: 1000
+  # uart:                  # example of a future interface
+  #   enabled: false
+  #   port: /dev/ttyUSB0
+  #   baudrate: 115200
+
+webui:
+  enabled: false
+  port: 8080

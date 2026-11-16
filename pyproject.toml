@@ -1,0 +1,20 @@
+[project]
+name = "open-battery-emulator"
+version = "0.0.1"
+description = "A battery pack in software for the Raspberry Pi, with BMS style data on CAN."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
