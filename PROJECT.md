@@ -72,7 +72,7 @@ pack:
   strings_in_parallel: 2
 
 start:
-  soc: 0.8
+  soc: 80                  # percent
   temperature_c: 25
 
 variation:                 # natural spread between cells, all 0 = identical cells
@@ -275,8 +275,8 @@ Battery
 Pack
 - **REQ-03** Pack = P strings in parallel, each of S modules in series, each of C cells in
   series.
-- **REQ-04** Discharge current is positive. SOC changes by coulomb counting and stays
-  between 0 and 100 %.
+- **REQ-04** Discharge current is positive. SOC is in percent everywhere (files, config,
+  code). It changes by coulomb counting and stays between 0 and 100 %.
 - **REQ-05** Cell voltage = OCV(SOC, temperature) - I x R0, using the charge or discharge
   OCV table by current direction as described in Battery files. Current splits equally
   across strings.
