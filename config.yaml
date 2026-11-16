@@ -6,7 +6,7 @@ pack:
   strings_in_parallel: 2
 
 start:
-  soc: 0.8
+  soc: 80                  # percent
   temperature_c: 25
 
 current:
