@@ -1,4 +1,4 @@
-"""CAN interface: sends the pack result on a CAN bus.
+"""CAN interface: sends the pack result on a CAN bus and reads the current command.
 
 Follows the interface contract in PROJECT.md: start, send, read_current, stop.
 
@@ -10,8 +10,15 @@ Two kinds of frames go out:
   module_frames pattern in config.yaml (REQ-13), because they depend on the
   pack size.
 
+One kind of frame comes in: the DBC message holding CurrentCommand.
+read_current() returns its newest value. The timeout is not handled here but
+in engine.py, the same for every interface (REQ-10).
+
 The engine calls send() once per tick, every 100 ms of emulated time, so a
 message with a 100 ms cycle goes out every tick and one with 1000 ms every 10th.
+
+send() never stops the emulator: values outside a signal's range are clamped
+(REQ-27) and frames the bus refuses are dropped with a warning (REQ-28).
 
 Units: DBC physical values are in V, A and %; cell voltages in module frames
 are whole millivolts.
@@ -19,7 +26,8 @@ are whole millivolts.
 
 import math
 import struct
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import can
@@ -36,6 +44,8 @@ STATUS_OFFSET = 0xF  # module temperature and status frame, last ID of a module
 FRAME_LENGTH = 8  # every module frame has DLC 8
 UNUSED_BYTE = 0xFF
 MAX_CELLS_PER_FRAME = 4  # 4 cells x 2 bytes = 8 bytes
+UINT16_RANGE = (0, 65535)  # module frame cell voltages, mV
+INT16_RANGE = (-32768, 32767)  # module frame temperature, 0.1 degC
 ALIVE_COUNTER_WRAP = 256  # counts 0 to 255, then starts at 0 again
 PACK_STATES = ("IDLE", "CHARGING", "DISCHARGING", "FULL", "EMPTY")
 
@@ -58,8 +68,9 @@ OUTPUT_SIGNALS = (
     "MaxDischargeCurrent",
 )
 
-# Signals the emulator receives (read in M3b, never sent).
-INPUT_SIGNALS = ("CurrentCommand",)
+# Signals the emulator receives, never sends.
+COMMAND_SIGNAL = "CurrentCommand"  # amps, discharge positive
+INPUT_SIGNALS = (COMMAND_SIGNAL,)
 
 
 def output_values(result: PackResult, alive_counter: int) -> dict:
@@ -69,7 +80,7 @@ def output_values(result: PackResult, alive_counter: int) -> dict:
         "PackCurrent": result.current_a,
         "PackSOC": result.soc_pct,
         "PackState": result.state,  # sent as its VAL_ name, e.g. "IDLE"
-        "CurrentTimeout": 0,  # set by the current timeout in M3b
+        "CurrentTimeout": int(result.current_timeout),  # set by the engine
         "TempOutOfRange": int(result.temp_out_of_range),
         "AliveCounter": alive_counter,
         "CellVmax": result.highest_cell.voltage_v,
@@ -115,8 +126,11 @@ class CanState:
     bus: can.BusABC
     messages: list[OutputMessage]
     module_frames: ModuleFrames
+    command_message: cantools.database.Message | None  # None: DBC has no input
     tick_count: int = 0
     alive_counter: int = 0
+    warned: set[str] = field(default_factory=set)  # warnings already printed
+    send_failing: bool = False  # the bus refused the last frame (REQ-28)
 
 
 state: CanState | None = None  # set by start(), cleared by stop()
@@ -125,8 +139,12 @@ state: CanState | None = None  # set by start(), cleared by stop()
 # --- 3. start: settings, checks, then open the bus ----------------------------
 
 
-def start(settings: dict, pack_info: PackInfo) -> None:
-    """Check everything first, then open the bus. Nothing is sent here."""
+def start(settings: dict, pack_info: PackInfo) -> bool:
+    """Check everything first, then open the bus. Nothing is sent here.
+
+    Returns True if the DBC has a CurrentCommand signal, so this interface can
+    provide current commands; otherwise False (interface contract).
+    """
     global state
 
     driver = settings.get("driver", "socketcan")
@@ -149,7 +167,11 @@ def start(settings: dict, pack_info: PackInfo) -> None:
         bus=open_bus(driver, channel, bitrate),
         messages=messages,
         module_frames=module_frames,
+        command_message=find_command_message(database),
     )
+    # Contract: True if this interface can provide current commands, which
+    # needs a DBC message with a CurrentCommand signal.
+    return state.command_message is not None
 
 
 def whole_number(values: dict, key: str, name: str, minimum: int = 0) -> int:
@@ -212,7 +234,7 @@ def check_dbc(
 
         outputs = [name for name in names if name in OUTPUT_SIGNALS]
         if not outputs:
-            continue  # an input message, read in M3b
+            continue  # an input message, see find_command_message()
         if len(outputs) != len(names):
             raise CanSettingsError(
                 f"interfaces.can.dbc: {where} mixes signals the emulator sends "
@@ -246,7 +268,7 @@ def check_signal(signal, where: str, worst_cases: dict) -> None:
         return
 
     if signal.name not in worst_cases:
-        return  # PackCurrent: any value can come in, checked when sending
+        return  # PackCurrent: any value can come in, clamped when sending (REQ-27)
     lowest, highest = worst_cases[signal.name]
     signal_low, signal_high = signal_range(signal)
     if lowest < signal_low or highest > signal_high:
@@ -274,6 +296,16 @@ def signal_range(signal) -> tuple[float, float]:
     if signal.maximum is not None:
         high = signal.maximum
     return low, high
+
+
+def find_command_message(
+    database: cantools.database.Database,
+) -> cantools.database.Message | None:
+    """The DBC message holding CurrentCommand, or None if the DBC has none."""
+    for message in database.messages:
+        if any(signal.name == COMMAND_SIGNAL for signal in message.signals):
+            return message
+    return None
 
 
 # --- 5. start: checking ranges ------------------------------------------------
@@ -390,18 +422,32 @@ def send(result: PackResult) -> None:
 
 
 def send_message(message: cantools.database.Message, result: PackResult) -> None:
-    """Encode one DBC message from the result by signal name and send it."""
+    """Encode one DBC message from the result by signal name and send it.
+
+    Every number is first clamped to its signal's range (REQ-27). PackState is
+    a VAL_ name like "IDLE", not a number, so it is left as it is.
+    """
     all_values = output_values(result, state.alive_counter)
-    values = {signal.name: all_values[signal.name] for signal in message.signals}
-    try:
-        data = message.encode(values, strict=True)
-    except cantools.database.EncodeError as error:
-        raise CanSettingsError(f"interfaces.can: {error}") from None
+    values = {}
+    for signal in message.signals:
+        value = all_values[signal.name]
+        if signal.name != "PackState":
+            low, high = signal_range(signal)
+            value = clamp(signal.name, value, low, high)
+        values[signal.name] = value
 
     if "AliveCounter" in values:
         state.alive_counter = (state.alive_counter + 1) % ALIVE_COUNTER_WRAP
 
-    state.bus.send(
+    try:
+        data = message.encode(values, strict=True)
+    except cantools.database.EncodeError as error:
+        # Should not happen after clamping. If it does, skip this message
+        # instead of stopping the emulator.
+        warn_once(message.name, f"cannot encode {message.name}, not sent: {error}")
+        return
+
+    bus_send(
         can.Message(
             arbitration_id=message.frame_id,
             is_extended_id=message.is_extended_frame,
@@ -429,21 +475,19 @@ def send_module_frames(result: PackResult) -> None:
 
         for n, frame_id in enumerate(cell_frame_ids):
             cells = voltages[n * k : (n + 1) * k]
-            millivolts = [round(v * 1000) for v in cells]
-            send_frame(frame_id, pack_bytes(f"<{len(cells)}H", millivolts))
+            millivolts = [
+                clamp("module cell voltage (mV)", round(v * 1000), *UINT16_RANGE)
+                for v in cells
+            ]
+            send_frame(frame_id, struct.pack(f"<{len(cells)}H", *millivolts))
 
         flags = 1 if result.temp_out_of_range else 0
-        temperature = round(result.temperature_c * 10)
-        send_frame(status_id, pack_bytes("<hB", [temperature, flags]))
-
-
-def pack_bytes(layout: str, values: list) -> bytes:
-    try:
-        return struct.pack(layout, *values)
-    except struct.error:
-        raise CanSettingsError(
-            f"interfaces.can.module_frames: values {values} do not fit the frame"
-        ) from None
+        temperature = clamp(
+            "module temperature (0.1 degC)",
+            round(result.temperature_c * 10),
+            *INT16_RANGE,
+        )
+        send_frame(status_id, struct.pack("<hB", temperature, flags))
 
 
 def pad_to_8(data: bytes) -> bytes:
@@ -452,17 +496,91 @@ def pad_to_8(data: bytes) -> bytes:
 
 
 def send_frame(frame_id: int, data: bytes) -> None:
-    state.bus.send(
+    bus_send(
         can.Message(arbitration_id=frame_id, is_extended_id=False, data=pad_to_8(data))
     )
 
 
-# --- 9. read_current and stop -------------------------------------------------
+# --- 9. send: never stopping the emulator (REQ-27, REQ-28) --------------------
+# Warnings go to stderr, so they do not mix with the status lines on stdout.
+
+
+def clamp(name: str, value, low, high):
+    """value limited to low..high. The first time a name is clamped, warn."""
+    if low <= value <= high:
+        return value
+    clamped = max(low, min(high, value))
+    warn_once(
+        name,
+        f"{name} {value:g} is outside {low:g} to {high:g}, sent as {clamped:g} "
+        f"(warned once)",
+    )
+    return clamped
+
+
+def warn_once(key: str, text: str) -> None:
+    """Print a warning the first time for this key, never again until restart."""
+    if key not in state.warned:
+        state.warned.add(key)
+        print(f"Warning: interfaces.can: {text}", file=sys.stderr)
+
+
+def bus_send(message: can.Message) -> None:
+    """Send one frame. If the bus refuses it, drop it and keep running.
+
+    Warns once when sending starts failing and once when it works again, not
+    on every frame (10 or more per tick would flood the terminal).
+    """
+    try:
+        state.bus.send(message)
+    except can.CanError as error:
+        if not state.send_failing:
+            state.send_failing = True
+            print(
+                f"Warning: interfaces.can: the bus refused a frame, frames are "
+                f"dropped until it works again ({error})",
+                file=sys.stderr,
+            )
+        return
+    if state.send_failing:
+        state.send_failing = False
+        print("interfaces.can: sending works again", file=sys.stderr)
+
+
+# --- 10. read_current and stop ------------------------------------------------
 
 
 def read_current() -> float | None:
-    """Receiving CurrentCommand (0x180) comes with M3b."""
-    return None
+    """The newest CurrentCommand in amps, or None if nothing new arrived.
+
+    Reads every frame waiting on the bus without blocking, so frames never
+    pile up. Frames with other IDs are ignored. If several commands arrived
+    since the last call, only the newest counts. A command frame that does not
+    decode (for example too short) is skipped with a warning (REQ-27).
+    """
+    if state is None:
+        raise RuntimeError("can_bus.read_current() called before start()")
+
+    command = state.command_message
+    newest = None
+    while (frame := state.bus.recv(timeout=0)) is not None:
+        if command is None:
+            continue  # the DBC has no input message: just empty the queue
+        if frame.arbitration_id != command.frame_id:
+            continue
+        if frame.is_extended_id != command.is_extended_frame:
+            continue
+        try:
+            decoded = command.decode(frame.data, decode_choices=False)
+        except cantools.database.DecodeError as error:
+            warn_once(
+                "received " + command.name,
+                f"skipped a {command.name} frame that does not decode "
+                f"(warned once): {error}",
+            )
+            continue
+        newest = float(decoded[COMMAND_SIGNAL])
+    return newest
 
 
 def stop() -> None:
