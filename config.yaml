@@ -24,6 +24,7 @@ current:
 interfaces:
   can:
     enabled: true
+    driver: socketcan      # socketcan, or virtual (python-can's virtual bus, tests and CI)
     channel: vcan0         # can0 on the Pi
     bitrate: 500000
     dbc: interfaces/can/battery.dbc

@@ -1,0 +1,48 @@
+VERSION ""
+
+
+NS_ :
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	BA_DEF_DEF_
+
+BS_:
+
+BU_: BMS Device
+
+
+BO_ 256 PackStatus: 8 BMS
+ SG_ PackVoltage : 0|16@1+ (0.1,0) [0|6553.5] "V" Device
+ SG_ PackCurrent : 16|16@1- (0.1,0) [-3276.8|3276.7] "A" Device
+ SG_ PackSOC : 32|16@1+ (0.1,0) [0|100] "%" Device
+ SG_ PackState : 48|4@1+ (1,0) [0|4] "" Device
+ SG_ CurrentTimeout : 52|1@1+ (1,0) [0|1] "" Device
+ SG_ TempOutOfRange : 53|1@1+ (1,0) [0|1] "" Device
+ SG_ AliveCounter : 56|8@1+ (1,0) [0|255] "" Device
+
+BO_ 257 CellStats: 8 BMS
+ SG_ CellVmax : 0|16@1+ (0.001,0) [0|65.535] "V" Device
+ SG_ CellVmaxModule : 16|8@1+ (1,0) [0|255] "" Device
+ SG_ CellVmaxCell : 24|8@1+ (1,0) [0|255] "" Device
+ SG_ CellVmin : 32|16@1+ (0.001,0) [0|65.535] "V" Device
+ SG_ CellVminModule : 48|8@1+ (1,0) [0|255] "" Device
+ SG_ CellVminCell : 56|8@1+ (1,0) [0|255] "" Device
+
+BO_ 258 PackLimits: 8 BMS
+ SG_ MaxChargeCurrent : 0|16@1+ (0.1,0) [0|6553.5] "A" Device
+ SG_ MaxDischargeCurrent : 16|16@1+ (0.1,0) [0|6553.5] "A" Device
+
+BO_ 384 CurrentCommand: 8 Device
+ SG_ CurrentCommand : 0|16@1- (0.1,0) [-3276.8|3276.7] "A" BMS
+
+
+CM_ SG_ 256 PackCurrent "Discharge positive";
+CM_ SG_ 384 CurrentCommand "Current command from the device, discharge positive";
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 65535;
+BA_DEF_DEF_ "GenMsgCycleTime" 0;
+BA_ "GenMsgCycleTime" BO_ 256 100;
+BA_ "GenMsgCycleTime" BO_ 257 100;
+BA_ "GenMsgCycleTime" BO_ 258 100;
+VAL_ 256 PackState 0 "IDLE" 1 "CHARGING" 2 "DISCHARGING" 3 "FULL" 4 "EMPTY" ;

@@ -3,8 +3,8 @@
 A battery pack in software for the Raspberry Pi. Current goes in, the pack reacts like a
 real battery, and BMS style data goes out on CAN. Signals only, no real power.
 
-> Early development. The emulator runs in the terminal with simulated current; CAN comes
-> with milestone M3.
+> Early development. The emulator runs in the terminal with simulated current and sends
+> pack data on CAN. Current commands from CAN come with milestone M3b.
 
 ## What it does
 
@@ -27,13 +27,42 @@ Requirements, design and plan: [PROJECT.md](PROJECT.md)
 
 ## Run it
 
+The default `config.yaml` sends on the virtual CAN interface `vcan0`. Set it up once
+after each boot (Linux):
+
+```
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+Then start the emulator:
+
 ```
 uv sync
 uv run python -m emulator.engine
 ```
 
+No CAN wanted? Set `interfaces.can.enabled: false` in `config.yaml`.
+
 Options: `--config other.yaml` (default `config.yaml`) and `--speed 10` (run 10 times
-faster than real time; each step is still 100 ms of emulated time).
+faster than real time; each step is still 100 ms of emulated time). `--speed` must be 1
+while an interface such as CAN is enabled, because devices on the bus expect real time.
+
+### Watch the CAN frames
+
+In a second terminal, with `can-utils` installed (`sudo apt install can-utils`):
+
+```
+candump vcan0
+```
+
+shows the raw frames: 0x100 to 0x102 ten times a second, module frames from 0x200 once
+a second. To see them decoded with the DBC:
+
+```
+candump vcan0 | uv run python -m cantools decode interfaces/can/battery.dbc
+```
 
 It prints one line per second of emulated time:
 
