@@ -16,7 +16,7 @@ variation:                 # natural spread between cells, all 0 = identical cel
   seed: 42                 # same seed = same pack every run
 
 current:
-  source: simulated        # simulated, or the name of an enabled interface (can)
+  source: can        # simulated, or the name of an enabled interface (can)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
   deadband_a: 0.5          # pack currents within +-0.5 A count as 0
