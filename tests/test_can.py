@@ -326,6 +326,239 @@ def test_engine_sends_on_can_every_tick_and_stops(tmp_path, channel, receiver):
     assert can_bus.state is None  # stop() closed the bus
 
 
+# --- Receiving the current command (0x180) ------------------------------------
+# The engine reads from can because current.source is "can". The receiver
+# fixture is a second bus on the same virtual channel: it plays the device that
+# sends the command, and it sees what the emulator sends. Timeout 500 ms = 5 ticks.
+
+
+def command_engine(tmp_path, channel, **changes):
+    """One cell, SOC 50, current from CAN on a virtual channel."""
+    path = write_config(
+        tmp_path,
+        {
+            "current.source": "can",
+            "interfaces.can": can_settings(channel),
+            **changes,
+        },
+    )
+    return start_engine(path)
+
+
+def send_command(bus, amps):
+    """Send one CurrentCommand frame like a device would."""
+    data = DATABASE.encode_message(0x180, {"CurrentCommand": amps})
+    bus.send(can.Message(arbitration_id=0x180, is_extended_id=False, data=data))
+
+
+def sent_status(bus):
+    """The last 0x100 frame on the bus, decoded."""
+    frames = [f for f in received(bus) if f.arbitration_id == 0x100]
+    return DATABASE.decode_message(0x100, frames[-1].data)
+
+
+def test_command_frame_changes_pack_current_and_soc(tmp_path, channel, receiver):
+    """Checks REQ-08: a 0x180 frame from another device sets the pack current."""
+    engine = command_engine(tmp_path, channel)
+    send_command(receiver, 30)
+
+    result = step(engine)
+
+    assert result.current_a == pytest.approx(30)
+    assert result.state == "DISCHARGING"
+    assert not result.current_timeout
+    # 30 A for 0.1 s on 100 Ah takes 30 * 0.1 / 3600 % out.
+    assert result.soc_pct == pytest.approx(50 - 30 * 0.1 / 3600)
+
+
+def test_newest_of_several_frames_is_used(tmp_path, channel, receiver):
+    """Checks REQ-08: three commands in one tick: only the newest counts."""
+    engine = command_engine(tmp_path, channel)
+    for amps in (10, 20, -30):
+        send_command(receiver, amps)
+
+    assert step(engine).current_a == pytest.approx(-30)
+    assert can_bus.read_current() is None  # nothing new since the last call
+
+
+def test_start_is_in_timeout_until_the_first_command(tmp_path, channel, receiver):
+    """Checks REQ-10: before any frame the current is 0 A and the flag is set."""
+    engine = command_engine(tmp_path, channel)
+
+    result = step(engine)
+
+    assert result.current_a == 0
+    assert result.current_timeout
+    assert result.state == "IDLE"
+    assert result.soc_pct == 50
+
+
+def test_timeout_after_timeout_ms_and_cleared_by_a_new_frame(
+    tmp_path, channel, receiver
+):
+    """Checks REQ-10: a command is held for 500 ms, then 0 A and the flag; a new
+    frame clears it at once."""
+    engine = command_engine(tmp_path, channel)
+    send_command(receiver, 30)
+    first = step(engine)
+    assert (first.current_a, first.current_timeout) == (pytest.approx(30), False)
+
+    for _ in range(5):  # 100 to 500 ms since the command: still held
+        result = step(engine)
+        assert (result.current_a, result.current_timeout) == (
+            pytest.approx(30),
+            False,
+        )
+
+    late = step(engine)  # 600 ms since the command
+    assert (late.current_a, late.current_timeout) == (0, True)
+
+    send_command(receiver, 20)
+    back = step(engine)
+    assert (back.current_a, back.current_timeout) == (pytest.approx(20), False)
+
+
+def test_current_timeout_signal_matches_the_flag(tmp_path, channel, receiver):
+    """Checks REQ-10, REQ-12: CurrentTimeout in 0x100 is 1 in timeout, else 0."""
+    engine = command_engine(tmp_path, channel)
+
+    can_bus.send(step(engine))
+    assert sent_status(receiver)["CurrentTimeout"] == 1
+
+    send_command(receiver, 30)
+    can_bus.send(step(engine))
+    status = sent_status(receiver)
+    assert status["CurrentTimeout"] == 0
+    assert status["PackCurrent"] == pytest.approx(30)
+
+
+def test_received_current_inside_deadband_changes_nothing(tmp_path, channel, receiver):
+    """Checks REQ-24: a received 0.3 A with a 0.5 A deadband counts as 0 A."""
+    engine = command_engine(tmp_path, channel)
+
+    for _ in range(100):
+        send_command(receiver, 0.3)
+        result = step(engine)
+
+    assert result.current_a == 0
+    assert result.soc_pct == 50
+    assert result.state == "IDLE"
+    assert not result.current_timeout  # commands did arrive
+
+
+def test_dbc_without_current_command_cannot_be_the_source(tmp_path, channel):
+    """Checks REQ-08, REQ-14: without a CurrentCommand signal can.start() returns
+    False, so current.source: can stops the start and the bus is closed again."""
+    dbc = tmp_path / "no_input.dbc"
+    lines = DBC_PATH.read_text().splitlines()
+    dbc.write_text(
+        "\n".join(
+            line
+            for line in lines
+            if "384" not in line and "SG_ CurrentCommand" not in line
+        )
+    )
+    assert can_bus.start(can_settings(channel), info()) is True  # default DBC
+    can_bus.stop()
+    assert can_bus.start(can_settings(channel, dbc=dbc), info()) is False
+    can_bus.stop()
+
+    message = "current.source 'can' cannot provide current: interfaces.can has no"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        command_engine(tmp_path, channel, **{"interfaces.can.dbc": str(dbc)})
+    assert can_bus.state is None
+
+
+def test_undecodable_command_frame_is_skipped(tmp_path, channel, receiver, capsys):
+    """Checks REQ-27: a 0x180 frame that is too short is skipped with one warning;
+    the last good command stays."""
+    engine = command_engine(tmp_path, channel)
+    send_command(receiver, 30)
+    step(engine)
+
+    for _ in range(3):
+        receiver.send(
+            can.Message(arbitration_id=0x180, is_extended_id=False, data=[1, 2])
+        )
+        result = step(engine)
+
+    assert result.current_a == pytest.approx(30)
+    assert capsys.readouterr().err.count("does not decode") == 1
+
+
+# --- Sending never stops the emulator -----------------------------------------
+
+
+def test_value_outside_signal_range_is_clamped_and_warned_once(
+    tmp_path, channel, receiver, capsys
+):
+    """Checks REQ-27: 150 A with PackCurrent limited to +-100 A is sent as 100 A,
+    warned once, and the emulator keeps running."""
+    dbc = tmp_path / "narrow.dbc"
+    dbc.write_text(
+        DBC_PATH.read_text().replace(
+            "PackCurrent : 16|16@1- (0.1,0) [-3276.8|3276.7]",
+            "PackCurrent : 16|16@1- (0.1,0) [-100|100]",
+        )
+    )
+    path = write_config(
+        tmp_path,
+        {
+            "current.simulated_a": 150,
+            "interfaces.can": can_settings(channel, dbc=dbc),
+        },
+    )
+    engine = start_engine(path)
+    fake = FakeClock()
+
+    run(engine, max_ticks=20, clock=fake.clock, sleep=fake.sleep, output=print)
+
+    assert engine.tick_count == 20
+    assert engine.last_result.current_a == 150  # the pack itself is not limited
+    assert sent_status(receiver)["PackCurrent"] == pytest.approx(100)
+    warnings = capsys.readouterr().err
+    assert warnings.count("PackCurrent 150 is outside -100 to 100, sent as 100") == 1
+
+
+def test_module_frame_value_outside_its_range_is_clamped(
+    tmp_path, channel, receiver, capsys
+):
+    """Checks REQ-27: a module temperature too big for int16 0.1 degC is clamped."""
+    engine = make_engine(tmp_path, cells=1, series=1, parallel=1)
+    engine.pack.temperature_c = 4000  # 40000 in 0.1 degC, above 32767
+    can_bus.start(can_settings(channel), pack_info(engine.pack))
+
+    can_bus.send(step(engine))
+
+    status = {f.arbitration_id: f for f in received(receiver)}[0x20F]
+    assert struct.unpack("<h", status.data[:2]) == (32767,)
+    assert "module temperature (0.1 degC) 40000 is outside" in capsys.readouterr().err
+
+
+def test_bus_refusing_frames_does_not_stop_the_emulator(
+    tmp_path, channel, receiver, capsys, monkeypatch
+):
+    """Checks REQ-28: when the bus refuses frames, send() keeps going, warns once,
+    and says so when sending works again."""
+    engine = make_engine(tmp_path, cells=1, series=1, parallel=1)
+    can_bus.start(can_settings(channel), pack_info(engine.pack))
+    result = step(engine)
+
+    def refuse(message, timeout=None):
+        raise can.CanOperationError("No buffer space available")
+
+    working_send = can_bus.state.bus.send
+    monkeypatch.setattr(can_bus.state.bus, "send", refuse)
+    for _ in range(5):
+        can_bus.send(result)
+    assert capsys.readouterr().err.count("the bus refused a frame") == 1
+
+    monkeypatch.setattr(can_bus.state.bus, "send", working_send)
+    can_bus.send(result)
+    assert "sending works again" in capsys.readouterr().err
+    assert 0x100 in [f.arbitration_id for f in received(receiver)]
+
+
 def test_frames_per_module_count_matches_pattern():
     """Checks REQ-13: frames per module is cells / cells_per_frame, rounded up."""
     assert can_bus.module_frame_ids(0x200, 0x10, 2, math.ceil(12 / 4)) == [

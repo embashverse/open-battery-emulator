@@ -106,6 +106,7 @@ class PackResult:
     max_discharge_a: float
     temp_out_of_range: bool
     temperature_c: float  # the set pack temperature
+    current_timeout: bool = False  # never set here; the engine sets it (REQ-10)
 
 
 @dataclass

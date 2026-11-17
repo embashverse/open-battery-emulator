@@ -50,9 +50,9 @@ class EngineConfig:
 
     battery_folder: Path
     pack_settings: PackSettings
-    current_source: str
+    current_source: str  # "simulated" or the name of an enabled interface
     simulated_a: float
-    timeout_ms: float  # not used until M3b (interface timeout, REQ-10)
+    timeout_ms: float  # interface current timeout (REQ-10)
     interfaces: list[tuple[str, dict]]  # (name, settings) of each enabled one
 
 
@@ -63,6 +63,10 @@ class Engine:
     interfaces: list[ModuleType] = field(default_factory=list)  # started ones
     tick_count: int = 0
     last_result: PackResult | None = None
+    # Current from an interface (REQ-08, REQ-10). Unused when simulated.
+    current_interface: ModuleType | None = None  # the one named by current.source
+    command_a: float = 0.0  # the last current command received
+    command_tick: int | None = None  # tick_count when it arrived; None = none yet
 
 
 # --- 3. Reading config.yaml ---------------------------------------------------
@@ -145,14 +149,16 @@ def check_battery(raw: dict, config_folder: Path) -> Path:
     return folder
 
 
-def check_current_source(raw: dict) -> str:
-    """Only simulated current exists until M3b (current from an interface)."""
+def check_current_source(raw: dict, enabled_names: list[str]) -> str:
+    """REQ-08: "simulated", or the name of an interface with enabled: true."""
     source = get_value(raw, "current", "source")
-    if source != "simulated":
-        raise ConfigError(
-            f"current.source '{source}' is not available yet (comes with M3b)"
-        )
-    return source
+    if source == "simulated" or source in enabled_names:
+        return source
+    enabled = ", ".join(enabled_names) or "none"
+    raise ConfigError(
+        f"current.source '{source}' must be 'simulated' or the name of an "
+        f"enabled interface (enabled: {enabled})"
+    )
 
 
 def check_interfaces(raw: dict, config_folder: Path) -> list[tuple[str, dict]]:
@@ -218,13 +224,17 @@ def check_config(raw: dict, config_folder: Path) -> EngineConfig:
         deadband_a=get_number(raw, "current", "deadband_a", minimum=0),
     )
 
+    # Interfaces first: current.source may name one of them.
+    interfaces = check_interfaces(raw, config_folder)
+    enabled_names = [name for name, _ in interfaces]
+
     return EngineConfig(
         battery_folder=battery_folder,
         pack_settings=pack_settings,
-        current_source=check_current_source(raw),
+        current_source=check_current_source(raw, enabled_names),
         simulated_a=get_number(raw, "current", "simulated_a"),
         timeout_ms=get_number(raw, "current", "timeout_ms", above=0),
-        interfaces=check_interfaces(raw, config_folder),
+        interfaces=interfaces,
     )
 
 
@@ -281,15 +291,30 @@ def load_interface(name: str) -> ModuleType:
 
 
 def start_interfaces(engine: Engine, modules: list[ModuleType]) -> None:
-    """Call start(settings, pack_info) on each. If one fails, stop the others."""
+    """Call start(settings, pack_info) on each. If one fails, stop the others.
+
+    start() returns True if the interface can provide current commands. The
+    interface named by current.source must, otherwise the start stops here.
+    It is remembered: step() reads the current from it.
+    """
     info = pack_info(engine.pack)
-    for module, (_, settings) in zip(modules, engine.config.interfaces, strict=True):
+    for module, (name, settings) in zip(modules, engine.config.interfaces, strict=True):
         try:
-            module.start(settings, info)
+            provides_current = module.start(settings, info)
         except Exception:
             stop_interfaces(engine)
             raise
         engine.interfaces.append(module)
+
+        if name != engine.config.current_source:
+            continue
+        if provides_current is not True:
+            stop_interfaces(engine)  # including this one: it was started
+            raise ConfigError(
+                f"current.source '{name}' cannot provide current: interfaces.{name} "
+                f"has no current input (its start() returned False)"
+            )
+        engine.current_interface = module
 
 
 def send_to_interfaces(engine: Engine, result: PackResult) -> None:
@@ -301,6 +326,7 @@ def stop_interfaces(engine: Engine) -> None:
     """Close every started interface, last started first."""
     while engine.interfaces:
         engine.interfaces.pop().stop()
+    engine.current_interface = None
 
 
 # --- 7. One tick --------------------------------------------------------------
@@ -309,14 +335,43 @@ def stop_interfaces(engine: Engine) -> None:
 def step(engine: Engine) -> PackResult:
     """Run exactly one tick of TICK_S seconds. No sleeping, no printing.
 
-    In M2 the current is always the simulated one from config.yaml, so it acts
-    like a current command arriving every tick (REQ-09).
+    First pick the current (simulated or from an interface, with the timeout),
+    then move the pack. The deadband is applied afterwards in pack.py.
     """
-    current_a = engine.config.simulated_a
+    current_a, timed_out = pick_current(engine)
     result = tick(engine.pack, current_a, TICK_S)
+    result.current_timeout = timed_out  # pack.py knows nothing about sources
     engine.tick_count += 1
     engine.last_result = result
     return result
+
+
+def pick_current(engine: Engine) -> tuple[float, bool]:
+    """The current for this tick and whether the timeout flag is set.
+
+    Simulated: the value from config.yaml, like a command every tick (REQ-09).
+    Interface: a new value from read_current() becomes the current and resets
+    the timeout. With nothing new, the last command is held until more than
+    timeout_ms has passed; then the current is 0 and the flag is set (REQ-10).
+    Before the first command the emulator is in timeout.
+
+    Time is counted in ticks, so it is emulated time. With an interface
+    enabled, --speed is always 1 (REQ-26), so that equals real time.
+    """
+    if engine.current_interface is None:
+        return engine.config.simulated_a, False
+
+    new_value = engine.current_interface.read_current()
+    if new_value is not None:
+        engine.command_a = float(new_value)
+        engine.command_tick = engine.tick_count
+
+    if engine.command_tick is None:
+        return 0.0, True  # no command has arrived yet
+    since_command_ms = (engine.tick_count - engine.command_tick) * TICK_S * 1000
+    if since_command_ms > engine.config.timeout_ms:
+        return 0.0, True
+    return engine.command_a, False
 
 
 def elapsed_s(engine: Engine) -> float:
@@ -328,16 +383,22 @@ def elapsed_s(engine: Engine) -> float:
 
 
 def status_line(engine: Engine, result: PackResult) -> str:
-    """One line with the main pack values. M = module, C = cell, both from 1."""
+    """One line with the main pack values. M = module, C = cell, both from 1.
+
+    TIMEOUT goes at the end, so the columns before it never move (REQ-25).
+    """
     low = result.lowest_cell
     high = result.highest_cell
-    return (
+    line = (
         f"t={elapsed_s(engine):8.1f} s  {result.state:<11}  "
         f"I={result.current_a:7.1f} A  V={result.voltage_v:8.2f} V  "
         f"SOC={result.soc_pct:6.2f} %  "
         f"min {low.voltage_v:.3f} V (M{low.module} C{low.cell})  "
         f"max {high.voltage_v:.3f} V (M{high.module} C{high.cell})"
     )
+    if result.current_timeout:
+        line += "  TIMEOUT"
+    return line
 
 
 def summary_line(engine: Engine) -> str:
@@ -380,12 +441,6 @@ def run(
         ticks_done += 1
 
         send_to_interfaces(engine, result)
-
-        # --- M3b: current from an interface ------------------------------
-        # If current.source names an interface, call its read_current() and
-        # use that value for the next step(); if no command arrived within
-        # current.timeout_ms, use 0 A and set the timeout flag (REQ-10).
-        # ------------------------------------------------------------------
 
         if engine.tick_count % TICKS_PER_STATUS == 0:
             output(status_line(engine, result))
@@ -436,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print()  # end the line after the "^C" the terminal shows
         print(summary_line(engine))
-    except ValueError as error:  # e.g. a value an interface cannot send
+    except ValueError as error:  # an interface that refuses a value (CAN never does)
         print(f"Error: {error}", file=sys.stderr)
         return 1
     finally:

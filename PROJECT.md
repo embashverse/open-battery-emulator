@@ -59,7 +59,9 @@ same four functions:
 start(settings, pack_info)  open the port or bus. settings is its section of
                             config.yaml; pack_info is the pack shape and its highest
                             values (cells, modules, strings, v_max, current limits),
-                            so the interface can check at start that the pack fits
+                            so the interface can check at start that the pack fits.
+                            Returns True if this interface can provide current
+                            commands, otherwise False
 send(result)                send the latest pack result (called every tick, 100 ms)
 read_current()              latest current command, or None if this interface has no input
 stop()                      close the port or bus cleanly (called once on exit)
@@ -68,6 +70,9 @@ stop()                      close the port or bus cleanly (called once on exit)
 The engine loads each interface with `enabled: true` by its name under `interfaces:` in
 `config.yaml`, importing `interfaces.<name>` with `importlib`. It calls these four
 functions and nothing else, so `engine.py` never imports anything CAN or UART specific.
+If `current.source` names an interface whose `start()` returned False, the engine stops
+every started interface and the start stops with an error naming `current.source`. CAN
+returns True only if the DBC has a `CurrentCommand` signal.
 
 Before calling `start`, the engine makes relative file paths full: any relative string
 setting that names an existing file next to `config.yaml` (like `dbc:`) is passed with its
@@ -95,7 +100,7 @@ variation:                 # natural spread between cells, all 0 = identical cel
   seed: 42                 # same seed = same pack every run
 
 current:
-  source: simulated        # simulated, or the name of an interface (can)
+  source: simulated        # simulated, or the name of an enabled interface (can)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
   deadband_a: 0.5          # pack currents within +-0.5 A count as 0
@@ -351,11 +356,17 @@ State
 
 Current input
 - **REQ-08** Current is simulated or comes from an interface (CAN in v1), as set by
-  `current.source` in `config.yaml`.
+  `current.source` in `config.yaml`: `simulated` or the name of an enabled interface
+  whose `start()` says it can provide current commands. Anything else stops the start
+  with an error naming `current.source`.
 - **REQ-09** Simulated current behaves exactly like a current command arriving every
   100 ms.
 - **REQ-10** If the source is an interface and no current command arrives within
-  `timeout_ms`, current is 0 and the timeout flag is set.
+  `timeout_ms`, current is 0 and the timeout flag is set. The timeout is handled in
+  `engine.py` for any interface, never in interface code. The last command is held
+  until more than `timeout_ms` has passed since it arrived. At start no command has
+  arrived, so the emulator starts in timeout (0 A, flag set). The flag clears as soon as
+  a command arrives.
 - **REQ-24** Pack currents within ±`current.deadband_a` count as 0. The deadband is
   applied once per tick in `pack.py` before anything else, and only to the pack current,
   never to string currents.
@@ -366,6 +377,13 @@ CAN
 - **REQ-12** Pack messages are built from the DBC file using the signal names above.
   Changing IDs, layout, scaling or cycle time needs only a DBC edit.
 - **REQ-13** Module frames follow the pattern set in `config.yaml`.
+- **REQ-27** A value outside its CAN signal range (DBC signals and module frame fields)
+  is clamped to the range and a warning is printed once per signal. A received frame that
+  cannot be decoded is skipped with a warning. The emulator never stops because of a
+  value.
+- **REQ-28** If the bus refuses a frame (for example no other device acknowledges on
+  `can0`), the emulator keeps running. It prints one warning when sending starts failing
+  and one when it works again.
 
 Structure
 - **REQ-14** Every interface follows the interface contract (`start`, `send`,
@@ -380,7 +398,8 @@ Structure
 Terminal
 - **REQ-25** When run from the command line, the engine prints one status line per
   second of emulated time with elapsed time, state, pack current, voltage, average SOC,
-  and lowest and highest cell with module and cell number.
+  and lowest and highest cell with module and cell number. It shows `TIMEOUT` when the
+  timeout flag is set.
 
 Web UI
 - **REQ-15** The web UI is optional. When enabled it shows current, SOC, voltages, state
@@ -393,6 +412,14 @@ Web UI
 - **REQ-18** The web UI builds its choices from what exists: batteries from the folders in
   `batteries/`, interfaces and their settings from `config.yaml`. A new battery or
   interface appears in the UI without UI code changes.
+- **REQ-29** The web UI lets the user change the CAN ID of each message in the DBC
+  (PackStatus, CellStats, PackLimits, CurrentCommand) and the module frame `base_id` and
+  `id_step` in `config.yaml`. Signal names and layouts are not editable in the UI. Save
+  writes the IDs into the DBC file and `config.yaml`. Save is refused with a clear message
+  if two messages share an ID, a pack message falls inside the module frame range, an ID
+  is above 0x7FF, or the module range does not fit the pack. The UI shows the module ID
+  range for the current pack size and notes that lower IDs have higher priority on the
+  bus.
 
 Platform
 - **REQ-19** Runs on Linux with SocketCAN: `vcan0` on a laptop, `can0` on the Pi.
@@ -425,7 +452,7 @@ Rules:
 | M2 | Engine | engine runs in the terminal from `config.yaml` with simulated current and prints values |
 | M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
 | M4 | Pi | runs on the Pi as a service on boot with a CAN adapter; another device receives and sends |
-| M5 | Web UI | optional page shows live values, changes the simulated current, and saves settings to `config.yaml` |
+| M5 | Web UI | optional page shows live values, changes the simulated current, saves settings to `config.yaml`, and edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
 | v1.0 | Release | README quick start works, every REQ has a passing test |
 
 ## Later

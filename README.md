@@ -3,8 +3,8 @@
 A battery pack in software for the Raspberry Pi. Current goes in, the pack reacts like a
 real battery, and BMS style data goes out on CAN. Signals only, no real power.
 
-> Early development. The emulator runs in the terminal with simulated current and sends
-> pack data on CAN. Current commands from CAN come with milestone M3b.
+> Early development. The emulator runs in the terminal, sends pack data on CAN and takes
+> its current either simulated or from a current command on CAN.
 
 ## What it does
 
@@ -77,6 +77,37 @@ t=     1.0 s  DISCHARGING  I=   50.0 A  V=  315.36 V  SOC= 80.00 %  min 3.283 V 
 - `V` pack voltage
 - `SOC` average SOC of all cells
 - `min` / `max` lowest and highest cell voltage, with module (`M`) and cell (`C`) number
+- `TIMEOUT` at the end: the current comes from an interface and no command arrived within
+  `current.timeout_ms`, so the current is 0
+
+### Send a current from the terminal
+
+Set `current.source: can` in `config.yaml` and start the emulator. Until a command
+arrives it runs at 0 A and the status line ends with `TIMEOUT`.
+
+The command is message 0x180 (`CurrentCommand` in the DBC): a signed 16 bit value in
+0.1 A, little endian, discharge positive, 8 bytes. 50 A is 500 = 0x01F4, sent as `F4 01`:
+
+```
+cansend vcan0 180#F401000000000000
+```
+
+One frame only holds for `timeout_ms` (500 ms), then the emulator falls back to 0 A, like
+a real BMS whose device has gone quiet. To keep a current flowing, send it every 100 ms:
+
+```
+while true; do cansend vcan0 180#F401000000000000; sleep 0.1; done
+```
+
+or with `cangen` from the same package: `cangen vcan0 -I 180 -L 8 -D F401000000000000 -g 100`.
+
+Charging is negative: 20 A charge is -200 = 0xFF38, sent as `38 FF`:
+`180#38FF000000000000`. Stop the loop with Ctrl+C and `TIMEOUT` comes back within
+half a second. `CurrentTimeout` in 0x100 follows the same flag.
+
+A value that does not fit its CAN signal is clamped and warned about once. If the bus
+refuses frames (for example no other device on `can0` to acknowledge them), the emulator
+warns and keeps running.
 
 Ctrl+C stops it with a one line summary. A bad setting in `config.yaml` stops it at
 start with a message naming the setting.

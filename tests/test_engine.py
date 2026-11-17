@@ -106,10 +106,6 @@ def test_simulated_current_inside_deadband_changes_nothing(tmp_path):
         ({"current.deadband_a": -0.1}, "current.deadband_a must be at least 0"),
         ({"current.timeout_ms": 0}, "current.timeout_ms must be greater than 0"),
         ({"current.simulated_a": True}, "current.simulated_a must be a number"),
-        (
-            {"current.source": "can"},
-            "current.source 'can' is not available yet (comes with M3b)",
-        ),
         ({"battery": "nothing_here"}, "battery: no folder batteries/nothing_here"),
         ({"battery": MISSING}, "battery is missing"),
     ],
@@ -222,14 +218,20 @@ def test_loop_prints_one_status_line_per_emulated_second(tmp_path):
 # --- Interfaces ---------------------------------------------------------------
 
 
-def make_fake_interface(monkeypatch, calls):
+def make_fake_interface(monkeypatch, calls, provides_current=True):
     """Put a fake interfaces.fake in sys.modules; its four functions log calls.
 
     The engine can then only find it the normal way: by the name "fake" under
-    interfaces: in config.yaml, through importlib.
+    interfaces: in config.yaml, through importlib. start() returns
+    provides_current, as the contract says.
     """
+
+    def start(settings, pack_info):
+        calls.append(("start", settings))
+        return provides_current
+
     fake = types.ModuleType("interfaces.fake")
-    fake.start = lambda settings, pack_info: calls.append(("start", settings))
+    fake.start = start
     fake.send = lambda result: calls.append(("send", result))
     fake.read_current = lambda: None
     fake.stop = lambda: calls.append(("stop", None))
@@ -334,6 +336,77 @@ def test_speed_above_1_with_an_interface_is_an_error(tmp_path, monkeypatch, caps
         "--speed must be 1 when an interface is enabled (enabled: fake)" in error_text
     )
     assert calls == []  # nothing was started
+
+
+@pytest.mark.parametrize(
+    ("changes", "enabled"),
+    [
+        ({"current.source": "uart"}, "none"),  # no such interface at all
+        (
+            {"current.source": "fake", "interfaces.fake": {"enabled": False}},
+            "none",
+        ),
+        (
+            {
+                "current.source": "fake",
+                "interfaces.fake": {"enabled": False},
+                "interfaces.other": {"enabled": True},
+            },
+            "other",
+        ),
+    ],
+)
+def test_current_source_must_be_an_enabled_interface(
+    tmp_path, monkeypatch, changes, enabled
+):
+    """Checks REQ-08: current.source naming an unknown or disabled interface stops
+    the start with an error naming current.source and the enabled interfaces."""
+    calls = []
+    fake = make_fake_interface(monkeypatch, calls)
+    monkeypatch.setitem(sys.modules, "interfaces.other", fake)  # same fake, 2nd name
+    path = write_config(tmp_path, changes)
+
+    source = changes["current.source"]
+    message = (
+        f"current.source '{source}' must be 'simulated' or the name of an "
+        f"enabled interface (enabled: {enabled})"
+    )
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        start_engine(path)
+    assert calls == []  # checked before anything was started
+
+
+def test_source_whose_start_returns_false_is_an_error(tmp_path, monkeypatch):
+    """Checks REQ-08, REQ-14: current.source naming an interface whose start()
+    returned False stops the start, and the interface is stopped again."""
+    calls = []
+    make_fake_interface(monkeypatch, calls, provides_current=False)
+    path = write_config(
+        tmp_path, {"current.source": "fake", "interfaces.fake": {"enabled": True}}
+    )
+
+    message = "current.source 'fake' cannot provide current: interfaces.fake has no"
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        start_engine(path)
+    assert [name for name, _ in calls] == ["start", "stop"]
+
+
+def test_status_line_shows_timeout(tmp_path, monkeypatch):
+    """Checks REQ-25, REQ-10: with an interface that sends nothing, the line ends
+    with TIMEOUT; with simulated current it does not."""
+    calls = []
+    make_fake_interface(monkeypatch, calls)  # read_current() always None
+    path = write_config(
+        tmp_path, {"current.source": "fake", "interfaces.fake": {"enabled": True}}
+    )
+    engine = start_engine(path)
+    result = step(engine)
+
+    assert result.current_timeout
+    assert status_line(engine, result).endswith("  TIMEOUT")
+
+    simulated = start_engine(write_config(tmp_path / "sim"))
+    assert "TIMEOUT" not in status_line(simulated, step(simulated))
 
 
 def test_speed_above_1_without_interfaces_is_allowed(tmp_path):
