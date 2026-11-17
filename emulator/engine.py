@@ -11,20 +11,30 @@ temperature in degrees C, voltage in volts, time in seconds.
 """
 
 import argparse
+import importlib
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
-from emulator.pack import Pack, PackResult, PackSettings, build_pack, tick
+from emulator.pack import (
+    Pack,
+    PackResult,
+    PackSettings,
+    build_pack,
+    pack_info,
+    tick,
+)
 
 # --- 1. Constants -------------------------------------------------------------
 
 TICK_S = 0.1  # emulated time per step; the speed factor never changes this
 TICKS_PER_STATUS = 10  # one status line per second of emulated time
+CONTRACT = ("start", "send", "read_current", "stop")  # interface functions
 
 
 # --- 2. Data shapes -----------------------------------------------------------
@@ -42,13 +52,15 @@ class EngineConfig:
     pack_settings: PackSettings
     current_source: str
     simulated_a: float
-    timeout_ms: float  # not used until M3 (interface timeout, REQ-10)
+    timeout_ms: float  # not used until M3b (interface timeout, REQ-10)
+    interfaces: list[tuple[str, dict]]  # (name, settings) of each enabled one
 
 
 @dataclass
 class Engine:
     config: EngineConfig
     pack: Pack
+    interfaces: list[ModuleType] = field(default_factory=list)  # started ones
     tick_count: int = 0
     last_result: PackResult | None = None
 
@@ -134,13 +146,57 @@ def check_battery(raw: dict, config_folder: Path) -> Path:
 
 
 def check_current_source(raw: dict) -> str:
-    """Only simulated current exists in M2. The interfaces section is ignored."""
+    """Only simulated current exists until M3b (current from an interface)."""
     source = get_value(raw, "current", "source")
     if source != "simulated":
         raise ConfigError(
-            f"current.source '{source}' is not available yet (comes with M3)"
+            f"current.source '{source}' is not available yet (comes with M3b)"
         )
     return source
+
+
+def check_interfaces(raw: dict, config_folder: Path) -> list[tuple[str, dict]]:
+    """Name and settings of every interface with enabled: true.
+
+    The engine does not know what any setting means. It only makes relative
+    file paths full (see resolve_paths), so interfaces get usable paths.
+    """
+    sections = raw.get("interfaces")
+    if sections is None:
+        return []  # no interfaces section, or every interface commented out
+    if not isinstance(sections, dict):
+        raise ConfigError("interfaces must contain one section per interface")
+
+    enabled = []
+    for name, settings in sections.items():
+        if not isinstance(name, str) or not name.isidentifier():
+            raise ConfigError(f"interfaces.{name}: not a valid interface name")
+        if not isinstance(settings, dict):
+            raise ConfigError(f"interfaces.{name} must contain its settings")
+        switch = settings.get("enabled")
+        if switch is None:
+            raise ConfigError(f"interfaces.{name}.enabled is missing")
+        if not isinstance(switch, bool):
+            raise ConfigError(f"interfaces.{name}.enabled must be true or false")
+        if switch:
+            enabled.append((name, resolve_paths(settings, config_folder)))
+    return enabled
+
+
+def resolve_paths(settings: dict, config_folder: Path) -> dict:
+    """A copy of settings where every relative string that names an existing
+    file next to config.yaml is replaced by its full path. Nested sections are
+    handled the same way. Everything else is copied unchanged."""
+    resolved = {}
+    for key, value in settings.items():
+        if isinstance(value, dict):
+            value = resolve_paths(value, config_folder)
+        elif isinstance(value, str) and not Path(value).is_absolute():
+            candidate = config_folder / value
+            if candidate.is_file():
+                value = str(candidate.resolve())
+        resolved[key] = value
+    return resolved
 
 
 def check_config(raw: dict, config_folder: Path) -> EngineConfig:
@@ -168,22 +224,86 @@ def check_config(raw: dict, config_folder: Path) -> EngineConfig:
         current_source=check_current_source(raw),
         simulated_a=get_number(raw, "current", "simulated_a"),
         timeout_ms=get_number(raw, "current", "timeout_ms", above=0),
+        interfaces=check_interfaces(raw, config_folder),
     )
 
 
 # --- 5. Building the engine (once, at start) ----------------------------------
 
 
-def start_engine(config_path: Path) -> Engine:
-    """Read and check config.yaml, then build the pack through pack.py."""
+def start_engine(config_path: Path, speed: float = 1.0) -> Engine:
+    """Read and check config.yaml, build the pack, then start the interfaces.
+
+    Every check runs before any port is opened.
+    """
     config_path = Path(config_path)
     raw = read_config_file(config_path)
     config = check_config(raw, config_path.parent)
+    check_speed(config.interfaces, speed)
+    modules = [load_interface(name) for name, _ in config.interfaces]
     pack = build_pack(config.battery_folder, config.pack_settings)
-    return Engine(config=config, pack=pack)
+    engine = Engine(config=config, pack=pack)
+    start_interfaces(engine, modules)
+    return engine
 
 
-# --- 6. One tick --------------------------------------------------------------
+# --- 6. Interfaces ------------------------------------------------------------
+# The engine finds an interface only by its name under interfaces: in
+# config.yaml and calls only the contract functions (PROJECT.md). It never
+# knows what CAN or UART is (REQ-14).
+
+
+def check_speed(interfaces: list[tuple[str, dict]], speed: float) -> None:
+    """REQ-26: with a device on the other end, time must be real time."""
+    if interfaces and speed != 1:
+        names = ", ".join(name for name, _ in interfaces)
+        raise ConfigError(
+            f"--speed must be 1 when an interface is enabled (enabled: {names})"
+        )
+
+
+def load_interface(name: str) -> ModuleType:
+    """Import interfaces.<name> and check it has every contract function."""
+    module_name = f"interfaces.{name}"
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as error:
+        if error.name != module_name:
+            raise  # the interface itself imports something missing
+        raise ConfigError(f"interfaces.{name}: no folder interfaces/{name}") from None
+    for function in CONTRACT:
+        if not callable(getattr(module, function, None)):
+            raise ConfigError(
+                f"interfaces.{name}: interfaces/{name}/__init__.py has no "
+                f"{function}() (see the interface contract in PROJECT.md)"
+            )
+    return module
+
+
+def start_interfaces(engine: Engine, modules: list[ModuleType]) -> None:
+    """Call start(settings, pack_info) on each. If one fails, stop the others."""
+    info = pack_info(engine.pack)
+    for module, (_, settings) in zip(modules, engine.config.interfaces, strict=True):
+        try:
+            module.start(settings, info)
+        except Exception:
+            stop_interfaces(engine)
+            raise
+        engine.interfaces.append(module)
+
+
+def send_to_interfaces(engine: Engine, result: PackResult) -> None:
+    for module in engine.interfaces:
+        module.send(result)
+
+
+def stop_interfaces(engine: Engine) -> None:
+    """Close every started interface, last started first."""
+    while engine.interfaces:
+        engine.interfaces.pop().stop()
+
+
+# --- 7. One tick --------------------------------------------------------------
 
 
 def step(engine: Engine) -> PackResult:
@@ -204,7 +324,7 @@ def elapsed_s(engine: Engine) -> float:
     return engine.tick_count * TICK_S
 
 
-# --- 7. Status line -----------------------------------------------------------
+# --- 8. Status line -----------------------------------------------------------
 
 
 def status_line(engine: Engine, result: PackResult) -> str:
@@ -231,7 +351,7 @@ def summary_line(engine: Engine) -> str:
     return text
 
 
-# --- 8. The loop --------------------------------------------------------------
+# --- 9. The loop --------------------------------------------------------------
 
 
 def run(
@@ -259,16 +379,12 @@ def run(
         result = step(engine)
         ticks_done += 1
 
-        # --- M3: interfaces plug in here ---------------------------------
-        # Following the interface contract in PROJECT.md:
-        #   - before this loop, call start(settings) once for every enabled
-        #     interface, with its section of config.yaml;
-        #   - here, call send(result) on every enabled interface;
-        #   - here, if current.source names an interface, call its
-        #     read_current() and use that value for the next step(); if no
-        #     command arrived within current.timeout_ms, use 0 A and set the
-        #     timeout flag (REQ-10).
-        # The engine calls only these three functions, never CAN or UART code.
+        send_to_interfaces(engine, result)
+
+        # --- M3b: current from an interface ------------------------------
+        # If current.source names an interface, call its read_current() and
+        # use that value for the next step(); if no command arrived within
+        # current.timeout_ms, use 0 A and set the timeout flag (REQ-10).
         # ------------------------------------------------------------------
 
         if engine.tick_count % TICKS_PER_STATUS == 0:
@@ -278,7 +394,7 @@ def run(
         sleep(max(0.0, next_deadline - clock()))
 
 
-# --- 9. Command line ----------------------------------------------------------
+# --- 10. Command line ---------------------------------------------------------
 
 
 def positive_speed(text: str) -> float:
@@ -307,9 +423,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    # Config and battery file errors are shown as one line, no traceback.
+    # Config, battery file and interface start errors are shown as one line,
+    # no traceback.
     try:
-        engine = start_engine(Path(args.config))
+        engine = start_engine(Path(args.config), speed=args.speed)
     except ValueError as error:
         print(f"Config error: {error}", file=sys.stderr)
         return 1
@@ -319,6 +436,11 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print()  # end the line after the "^C" the terminal shows
         print(summary_line(engine))
+    except ValueError as error:  # e.g. a value an interface cannot send
+        print(f"Error: {error}", file=sys.stderr)
+        return 1
+    finally:
+        stop_interfaces(engine)
     return 0
 
 

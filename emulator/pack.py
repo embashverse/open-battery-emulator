@@ -105,6 +105,23 @@ class PackResult:
     max_charge_a: float
     max_discharge_a: float
     temp_out_of_range: bool
+    temperature_c: float  # the set pack temperature
+
+
+@dataclass
+class PackInfo:
+    """The shape of the pack and the highest values it can reach.
+
+    The engine hands this to every interface at start, so an interface can check
+    that the pack fits its messages before sending anything.
+    """
+
+    cells_per_module: int
+    modules_in_series: int
+    strings_in_parallel: int
+    v_max: float  # highest cell voltage before FULL, from cell.csv
+    max_charge_a: float  # P x the highest value in limit_charge.csv
+    max_discharge_a: float  # P x the highest value in limit_discharge.csv
 
 
 # --- 3. Building the pack (once, at start) ------------------------------------
@@ -157,6 +174,23 @@ def make_varied_cell(
 
 def clamp_soc(soc_pct: float) -> float:
     return max(0.0, min(100.0, soc_pct))
+
+
+def pack_info(pack: Pack) -> PackInfo:
+    """Describe the pack for the interfaces: its shape and highest values."""
+    battery = pack.battery
+    strings_in_parallel = len(pack.strings)
+    first_string = pack.strings[0]
+    highest_charge = max(max(row) for row in battery.limit_charge.values)
+    highest_discharge = max(max(row) for row in battery.limit_discharge.values)
+    return PackInfo(
+        cells_per_module=len(first_string.modules[0].cells),
+        modules_in_series=len(first_string.modules),
+        strings_in_parallel=strings_in_parallel,
+        v_max=battery.v_max,
+        max_charge_a=strings_in_parallel * highest_charge,
+        max_discharge_a=strings_in_parallel * highest_discharge,
+    )
 
 
 # --- 4. Each tick -------------------------------------------------------------
@@ -334,6 +368,7 @@ def make_result(
         max_charge_a=strings_in_parallel * min(lim.charge_a for lim in limits),
         max_discharge_a=strings_in_parallel * min(lim.discharge_a for lim in limits),
         temp_out_of_range=any(lim.temp_out_of_range for lim in limits),
+        temperature_c=temp_c,
     )
 
 

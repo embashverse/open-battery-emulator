@@ -39,6 +39,7 @@ open-battery-emulator/
 │   └── engine.py      high: config.yaml, current source, the 100 ms loop
 ├── interfaces/        how data leaves and enters, one folder each
 │   └── can/
+│       ├── __init__.py    exposes start, send, read_current, stop
 │       ├── can_bus.py
 │       └── battery.dbc    default message definitions, replace with your own
 ├── webui/             optional: live values, current, edit and save config.yaml
@@ -51,15 +52,27 @@ needs a change in `emulator/`, and the web UI shows both automatically.
 
 ### Interface contract
 
-Every interface folder has one Python file with the same three functions:
+Every interface is a Python package in `interfaces/` whose `__init__.py` exposes the
+same four functions:
 
 ```
-start(settings)       open the port or bus, using its section of config.yaml
-send(result)          send the latest pack result (called every tick)
-read_current()        latest current command, or None if this interface has no input
+start(settings, pack_info)  open the port or bus. settings is its section of
+                            config.yaml; pack_info is the pack shape and its highest
+                            values (cells, modules, strings, v_max, current limits),
+                            so the interface can check at start that the pack fits
+send(result)                send the latest pack result (called every tick, 100 ms)
+read_current()              latest current command, or None if this interface has no input
+stop()                      close the port or bus cleanly (called once on exit)
 ```
 
-The engine calls these and nothing else, so it never needs to know what CAN or UART is.
+The engine loads each interface with `enabled: true` by its name under `interfaces:` in
+`config.yaml`, importing `interfaces.<name>` with `importlib`. It calls these four
+functions and nothing else, so `engine.py` never imports anything CAN or UART specific.
+
+Before calling `start`, the engine makes relative file paths full: any relative string
+setting that names an existing file next to `config.yaml` (like `dbc:`) is passed with its
+full path, so it works whatever folder the emulator is started from. Every other setting
+is passed unchanged.
 
 ## config.yaml
 
@@ -90,6 +103,7 @@ current:
 interfaces:
   can:
     enabled: true
+    driver: socketcan      # socketcan, or virtual (python-can's virtual bus, tests and CI)
     channel: vcan0         # can0 on the Pi
     bitrate: 500000
     dbc: interfaces/can/battery.dbc
@@ -229,8 +243,22 @@ Temperature rules:
 
 Pack messages are defined entirely by the DBC file: IDs, byte layout, scaling and cycle
 time (`GenMsgCycleTime`). To match your own system, edit the DBC or point `can.dbc` to
-your own file. The only rule: signals must use the emulator's names below, so the
-emulator knows what to put where.
+your own file. The rules:
+
+- Signals must use the emulator's names below, so the emulator knows what to put where.
+  An unknown name stops the start with an error naming the signal.
+- Every message the emulator sends needs a `GenMsgCycleTime` that is a multiple of
+  100 ms (one tick). A message holds either signals the emulator sends or signals it
+  receives, never both.
+- Physical values are in V, A and %, like the pack result (so cell voltages use a factor
+  of 0.001 V, which is 1 mV per bit).
+- `PackState` needs `VAL_` names for IDLE, CHARGING, DISCHARGING, FULL and EMPTY.
+- Each signal's range must hold the values this pack can reach (for example pack voltage
+  up to cells in series x `v_max`), checked at start. `AliveCounter` counts 0 to 255 and
+  wraps.
+
+`interfaces.can.driver` is `socketcan` (real or `vcan` interfaces) or `virtual`
+(python-can's in-memory bus, used by the tests and CI).
 
 | Signal name | Meaning |
 |---|---|
@@ -258,7 +286,22 @@ of the DBC. With the defaults:
 0x200 + (module-1) x 0x10 + 0xF   module temperature and status
 ```
 
-Modules are numbered string by string. Little endian.
+Modules are numbered string by string: with 8 in series, module 9 is the first module of
+string 2. Frame n holds cells 4n+1 to 4n+4. Little endian.
+
+The status frame at offset 0xF:
+
+| Bytes | Content |
+|---|---|
+| 0-1 | module temperature, int16, 0.1 °C (the pack temperature for now) |
+| 2 | flags: bit 0 = temperature out of range, other bits 0 |
+| 3-7 | unused, 0xFF |
+
+Every module frame, including 0xF, always has DLC 8. Unused bytes are 0xFF, for example
+the end of a last cell frame with fewer cells. Checked at start: the cell frames of a
+module must fit below offset 0xF, `id_step` must be at least 0x10 so a module never
+overlaps the next one, the highest ID must be at most 0x7FF, and no module frame may use a
+DBC message ID.
 
 ## Requirements
 
@@ -318,15 +361,21 @@ Current input
   never to string currents.
 
 CAN
-- **REQ-11** Channel, bitrate and DBC file are set under `interfaces.can` in `config.yaml`.
+- **REQ-11** Driver (`socketcan` or `virtual`), channel, bitrate and DBC file are set
+  under `interfaces.can` in `config.yaml`.
 - **REQ-12** Pack messages are built from the DBC file using the signal names above.
   Changing IDs, layout, scaling or cycle time needs only a DBC edit.
 - **REQ-13** Module frames follow the pattern set in `config.yaml`.
 
 Structure
 - **REQ-14** Every interface follows the interface contract (`start`, `send`,
-  `read_current`) and is switched on in `config.yaml`. Adding one needs no change in
-  `emulator/`. The web UI only reads the result and may set the simulated current.
+  `read_current`, `stop`) and is switched on in `config.yaml`. The engine loads it by
+  name with `importlib` and never imports anything interface specific. Adding one needs
+  no change in `emulator/`. The web UI only reads the result and may set the simulated
+  current.
+- **REQ-26** When any interface is enabled, `--speed` must be 1, because devices on the
+  bus expect real time cycle times. Otherwise the start stops with an error naming
+  `--speed`.
 
 Terminal
 - **REQ-25** When run from the command line, the engine prints one status line per
@@ -374,7 +423,7 @@ Rules:
 | M0 | Setup | skeleton and green CI on `main` |
 | M1 | Cell and pack | `cell.py` and `pack.py` pass their tests; 100 A for 1 h on a 100 Ah cell takes SOC from 100 % to 0 %; every state transition, cell variation, Set SOC and Hold SOC tested |
 | M2 | Engine | engine runs in the terminal from `config.yaml` with simulated current and prints values |
-| M3 | CAN | pack messages on `vcan0` decode with the DBC; module frames follow the pattern; 0x180 changes the current; timeout works |
+| M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
 | M4 | Pi | runs on the Pi as a service on boot with a CAN adapter; another device receives and sends |
 | M5 | Web UI | optional page shows live values, changes the simulated current, and saves settings to `config.yaml` |
 | v1.0 | Release | README quick start works, every REQ has a passing test |

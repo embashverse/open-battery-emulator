@@ -1,14 +1,18 @@
-"""Tests for emulator/engine.py: config, one step, the loop, status line, command line.
+"""Tests for emulator/engine.py: config, one step, the loop, status line, command
+line and loading interfaces.
 
-Battery data and config.yaml are written in tmp_path, so these tests do not
-depend on batteries/ or the real config.yaml. No test sleeps: the loop gets a
-fake clock.
+Battery data and config.yaml are written in tmp_path by the helpers in
+conftest.py, so these tests do not depend on batteries/ or the real
+config.yaml. No test sleeps: the loop gets a fake clock.
 """
 
 import re
+import sys
+import types
+from pathlib import Path
 
 import pytest
-from ruamel.yaml import YAML
+from conftest import MISSING, FakeClock, write_config
 
 from emulator.engine import (
     TICK_S,
@@ -19,105 +23,8 @@ from emulator.engine import (
     start_engine,
     status_line,
     step,
+    stop_interfaces,
 )
-
-# --- Small test battery -------------------------------------------------------
-# OCV is a straight line: 3.0 V at SOC 0 to 3.5 V at SOC 100 (charge curve
-# 0.1 V higher). v_min and v_max are set wide, so the pack never goes EMPTY or
-# FULL in these tests: even at SOC 0 and 100 A a cell shows 2.9 V.
-
-CELL_CSV = """parameter,value,unit
-capacity,100,Ah
-r0,0.001,ohm
-v_min,2.5,V
-v_max,3.65,V
-"""
-
-OCV_DISCHARGE = """soc,0,40
-0,3.0,3.0
-100,3.5,3.5
-"""
-
-OCV_CHARGE = """soc,0,40
-0,3.1,3.1
-100,3.6,3.6
-"""
-
-LIMIT = """soc,0,40
-0,100,100
-100,100,100
-"""
-
-
-def write_battery(config_folder, name="test"):
-    folder = config_folder / "batteries" / name
-    folder.mkdir(parents=True)
-    (folder / "cell.csv").write_text(CELL_CSV)
-    (folder / "ocv_charge.csv").write_text(OCV_CHARGE)
-    (folder / "ocv_discharge.csv").write_text(OCV_DISCHARGE)
-    (folder / "limit_charge.csv").write_text(LIMIT)
-    (folder / "limit_discharge.csv").write_text(LIMIT)
-
-
-# --- Small test config --------------------------------------------------------
-
-MISSING = object()  # use as a value to leave a setting out
-
-
-def base_config():
-    """One cell, SOC 50, 25 degC, no variation, 10 A simulated."""
-    return {
-        "battery": "test",
-        "pack": {
-            "cells_per_module": 1,
-            "modules_in_series": 1,
-            "strings_in_parallel": 1,
-        },
-        "start": {"soc": 50, "temperature_c": 25},
-        "variation": {"capacity_pct": 0, "r0_pct": 0, "soc_pct": 0, "seed": 1},
-        "current": {
-            "source": "simulated",
-            "simulated_a": 10,
-            "timeout_ms": 500,
-            "deadband_a": 0.5,
-        },
-    }
-
-
-def write_config(tmp_path, changes=None):
-    """Write battery and config.yaml in tmp_path. changes: {"pack.cells_per_module": 0}."""
-    write_battery(tmp_path)
-    config = base_config()
-    for name, value in (changes or {}).items():
-        if "." in name:
-            section, key = name.split(".")
-            target = config[section]
-        else:
-            key, target = name, config
-        if value is MISSING:
-            del target[key]
-        else:
-            target[key] = value
-    path = tmp_path / "config.yaml"
-    with path.open("w") as file:
-        YAML().dump(config, file)
-    return path
-
-
-class FakeClock:
-    """Stands in for time.monotonic and time.sleep. Sleeping only moves the time."""
-
-    def __init__(self):
-        self.now = 0.0
-        self.sleeps = []
-
-    def clock(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.sleeps.append(seconds)
-        self.now += seconds
-
 
 # --- Running from a config file -----------------------------------------------
 
@@ -201,7 +108,7 @@ def test_simulated_current_inside_deadband_changes_nothing(tmp_path):
         ({"current.simulated_a": True}, "current.simulated_a must be a number"),
         (
             {"current.source": "can"},
-            "current.source 'can' is not available yet (comes with M3)",
+            "current.source 'can' is not available yet (comes with M3b)",
         ),
         ({"battery": "nothing_here"}, "battery: no folder batteries/nothing_here"),
         ({"battery": MISSING}, "battery is missing"),
@@ -310,3 +217,127 @@ def test_loop_prints_one_status_line_per_emulated_second(tmp_path):
     assert len(lines) == 3
     assert lines[0].startswith("t=     1.0 s")
     assert lines[2].startswith("t=     3.0 s")
+
+
+# --- Interfaces ---------------------------------------------------------------
+
+
+def make_fake_interface(monkeypatch, calls):
+    """Put a fake interfaces.fake in sys.modules; its four functions log calls.
+
+    The engine can then only find it the normal way: by the name "fake" under
+    interfaces: in config.yaml, through importlib.
+    """
+    fake = types.ModuleType("interfaces.fake")
+    fake.start = lambda settings, pack_info: calls.append(("start", settings))
+    fake.send = lambda result: calls.append(("send", result))
+    fake.read_current = lambda: None
+    fake.stop = lambda: calls.append(("stop", None))
+    monkeypatch.setitem(sys.modules, "interfaces.fake", fake)
+    return fake
+
+
+def test_engine_loads_interface_by_name_and_calls_the_contract(tmp_path, monkeypatch):
+    """Checks REQ-14: start once, send every tick, stop at the end, found by name."""
+    calls = []
+    make_fake_interface(monkeypatch, calls)
+    path = write_config(tmp_path, {"interfaces.fake": {"enabled": True, "port": 7}})
+
+    engine = start_engine(path)
+    fake = FakeClock()
+    run(engine, max_ticks=3, clock=fake.clock, sleep=fake.sleep, output=print)
+    stop_interfaces(engine)
+
+    names = [name for name, _ in calls]
+    assert names == ["start", "send", "send", "send", "stop"]
+    assert calls[0][1] == {"enabled": True, "port": 7}
+    assert calls[3][1] is engine.last_result
+
+
+def test_disabled_interface_is_not_loaded(tmp_path, monkeypatch):
+    """Checks REQ-14: enabled: false means the interface is never started."""
+    calls = []
+    make_fake_interface(monkeypatch, calls)
+    path = write_config(tmp_path, {"interfaces.fake": {"enabled": False}})
+
+    engine = start_engine(path)
+
+    assert engine.interfaces == []
+    assert calls == []
+
+
+def test_engine_source_imports_no_interface_code():
+    """Checks REQ-14: engine.py never imports CAN or any interface directly."""
+    source = (Path(__file__).parent.parent / "emulator" / "engine.py").read_text()
+    import_lines = [
+        line.strip()
+        for line in source.splitlines()
+        if line.strip().startswith(("import ", "from "))
+    ]
+    for line in import_lines:
+        assert "interfaces" not in line
+        assert "can" not in line.split()  # "import can" or "from can ..."
+        assert "cantools" not in line
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [
+        ({"enabled": True}, "interfaces.nothing: no folder interfaces/nothing"),
+        ({"enabled": "yes"}, "interfaces.nothing.enabled must be true or false"),
+        ({"port": 1}, "interfaces.nothing.enabled is missing"),
+    ],
+)
+def test_interface_config_errors_name_the_setting(tmp_path, section, message):
+    """Checks REQ-14: an unknown or badly switched interface gives a clear error."""
+    path = write_config(tmp_path, {"interfaces.nothing": section})
+    with pytest.raises(ConfigError, match=re.escape(message)):
+        start_engine(path)
+
+
+def test_relative_file_paths_reach_the_interface_as_full_paths(tmp_path, monkeypatch):
+    """Checks REQ-14: files next to config.yaml are passed with their full path."""
+    calls = []
+    make_fake_interface(monkeypatch, calls)
+    (tmp_path / "messages.dbc").write_text("")
+    path = write_config(
+        tmp_path,
+        {
+            "interfaces.fake": {
+                "enabled": True,
+                "dbc": "messages.dbc",
+                "channel": "vcan0",  # no such file: left as it is
+                "nested": {"file": "messages.dbc"},
+            }
+        },
+    )
+
+    start_engine(path)
+
+    settings = calls[0][1]
+    assert settings["dbc"] == str((tmp_path / "messages.dbc").resolve())
+    assert settings["nested"]["file"] == settings["dbc"]
+    assert settings["channel"] == "vcan0"
+
+
+def test_speed_above_1_with_an_interface_is_an_error(tmp_path, monkeypatch, capsys):
+    """Checks REQ-26: --speed 10 with an enabled interface stops before start()."""
+    calls = []
+    make_fake_interface(monkeypatch, calls)
+    path = write_config(tmp_path, {"interfaces.fake": {"enabled": True}})
+
+    exit_code = main(["--config", str(path), "--speed", "10"])
+
+    error_text = capsys.readouterr().err
+    assert exit_code == 1
+    assert (
+        "--speed must be 1 when an interface is enabled (enabled: fake)" in error_text
+    )
+    assert calls == []  # nothing was started
+
+
+def test_speed_above_1_without_interfaces_is_allowed(tmp_path):
+    """Checks REQ-26: without interfaces any speed is fine."""
+    path = write_config(tmp_path, {"interfaces.can.enabled": False})
+    engine = start_engine(path, speed=10)
+    assert engine.interfaces == []
