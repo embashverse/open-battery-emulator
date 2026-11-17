@@ -284,7 +284,7 @@ def test_loop_keeps_fixed_deadlines(tmp_path):
 
 
 def test_status_line_shows_state_current_voltage_and_soc(tmp_path):
-    """Checks M2: the engine prints state, current, voltage and SOC."""
+    """Checks REQ-25: the engine prints state, current, voltage and SOC."""
     path = write_config(tmp_path)
     engine = start_engine(path)
     result = step(engine)
@@ -299,7 +299,7 @@ def test_status_line_shows_state_current_voltage_and_soc(tmp_path):
 
 
 def test_loop_prints_one_status_line_per_emulated_second(tmp_path):
-    """Checks M2: one status line every 10 steps (1 s of emulated time)."""
+    """Checks REQ-25: one status line every 10 steps (1 s of emulated time)."""
     path = write_config(tmp_path)
     engine = start_engine(path)
     fake = FakeClock()
