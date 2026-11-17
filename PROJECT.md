@@ -412,6 +412,14 @@ Web UI
 - **REQ-18** The web UI builds its choices from what exists: batteries from the folders in
   `batteries/`, interfaces and their settings from `config.yaml`. A new battery or
   interface appears in the UI without UI code changes.
+- **REQ-29** The web UI lets the user change the CAN ID of each message in the DBC
+  (PackStatus, CellStats, PackLimits, CurrentCommand) and the module frame `base_id` and
+  `id_step` in `config.yaml`. Signal names and layouts are not editable in the UI. Save
+  writes the IDs into the DBC file and `config.yaml`. Save is refused with a clear message
+  if two messages share an ID, a pack message falls inside the module frame range, an ID
+  is above 0x7FF, or the module range does not fit the pack. The UI shows the module ID
+  range for the current pack size and notes that lower IDs have higher priority on the
+  bus.
 
 Platform
 - **REQ-19** Runs on Linux with SocketCAN: `vcan0` on a laptop, `can0` on the Pi.
@@ -444,7 +452,7 @@ Rules:
 | M2 | Engine | engine runs in the terminal from `config.yaml` with simulated current and prints values |
 | M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
 | M4 | Pi | runs on the Pi as a service on boot with a CAN adapter; another device receives and sends |
-| M5 | Web UI | optional page shows live values, changes the simulated current, and saves settings to `config.yaml` |
+| M5 | Web UI | optional page shows live values, changes the simulated current, saves settings to `config.yaml`, and edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
 | v1.0 | Release | README quick start works, every REQ has a passing test |
 
 ## Later
