@@ -36,6 +36,12 @@ sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
 ```
 
+or let the project do the same from the channel in `config.yaml` (after `uv sync`):
+
+```
+sudo .venv/bin/python -m interfaces.can.bring_up
+```
+
 Then start the emulator:
 
 ```
@@ -45,9 +51,11 @@ uv run python -m emulator.engine
 
 No CAN wanted? Set `interfaces.can.enabled: false` in `config.yaml`.
 
-Options: `--config other.yaml` (default `config.yaml`) and `--speed 10` (run 10 times
-faster than real time; each step is still 100 ms of emulated time). `--speed` must be 1
-while an interface such as CAN is enabled, because devices on the bus expect real time.
+Options: `--config other.yaml` (default `config.yaml`), `--speed 10` (run 10 times
+faster than real time; each step is still 100 ms of emulated time) and
+`--status-every 10` (print the status line every 10 s of emulated time instead of every
+second). `--speed` must be 1 while an interface such as CAN is enabled, because devices
+on the bus expect real time.
 
 ### Watch the CAN frames
 
@@ -109,8 +117,93 @@ A value that does not fit its CAN signal is clamped and warned about once. If th
 refuses frames (for example no other device on `can0` to acknowledge them), the emulator
 warns and keeps running.
 
-Ctrl+C stops it with a one line summary. A bad setting in `config.yaml` stops it at
-start with a message naming the setting.
+Ctrl+C (or SIGTERM, which is how systemd stops it) stops it with a one line summary. A
+bad setting in `config.yaml` stops it at start with a message naming the setting.
+
+## Run on a Raspberry Pi
+
+The emulator runs on the Pi as a service that starts at boot. Without CAN hardware it
+uses `vcan0`, exactly as on a laptop. Two services are installed:
+
+- `open-battery-emulator-can` runs once at boot as root and brings up the CAN channel
+  from `config.yaml` (`vcan0`: loads the module and creates it; `can0`: sets the bitrate
+  and brings it up).
+- `open-battery-emulator` then runs the emulator as your normal user, and restarts it
+  if it stops with an error.
+
+### 1. Prepare the Pi
+
+1. Install [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your laptop.
+   Choose your Pi model, **Raspberry Pi OS Lite (64-bit)** and the SD card.
+2. In the OS customisation settings, set a hostname (for example `battery`), a user name
+   and password, your Wi‑Fi, and on the Services tab enable SSH. Write the card, put it
+   in the Pi and power it on.
+3. From your laptop, log in:
+
+   ```
+   ssh <user>@battery.local
+   ```
+
+4. Install the tools (`git`, `can-utils` for `candump`/`cansend`, `gh` for GitHub) and
+   [uv](https://docs.astral.sh/uv/):
+
+   ```
+   sudo apt update && sudo apt install -y git can-utils gh
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source ~/.bashrc
+   ```
+
+### 2. Get the code and install the services
+
+```
+gh auth login
+gh repo clone embashverse/open-battery-emulator
+cd open-battery-emulator
+uv sync
+sudo deploy/install.sh --dry-run     # optional: shows what it would do
+sudo deploy/install.sh
+```
+
+`install.sh` fills in your user name and the folder you cloned into, copies both unit
+files to `/etc/systemd/system`, enables them and starts them. The service uses the
+project's `.venv` directly, so uv is only needed for `uv sync`. Run it with `sudo` from
+your normal user: the emulator runs as that user, never as root.
+
+### 3. Check it
+
+```
+systemctl status open-battery-emulator           # should say "active (running)"
+journalctl -u open-battery-emulator -f           # status line every 10 s, Ctrl+C to leave
+candump vcan0                                    # the CAN frames
+```
+
+- **Survives a reboot:** `sudo reboot`, log in again, and `systemctl status` shows it
+  running.
+- **Restarts after a crash:** `sudo systemctl kill -s KILL open-battery-emulator`, and
+  within about 5 s `systemctl status` shows it running again with a new PID.
+  (`sudo systemctl stop open-battery-emulator` is a normal stop and is not restarted.)
+
+### Update later
+
+```
+cd ~/open-battery-emulator
+git pull
+uv sync
+sudo systemctl restart open-battery-emulator
+```
+
+After a change to `config.yaml`, the same restart picks it up. If you changed the CAN
+channel or bitrate, restart the bus step first:
+`sudo systemctl restart open-battery-emulator-can open-battery-emulator`.
+
+### Remove
+
+```
+sudo deploy/install.sh --remove
+```
+
+stops and disables both services and deletes the unit files. `vcan0` stays until the next
+reboot.
 
 ## Quick start
 

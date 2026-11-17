@@ -1,0 +1,25 @@
+# Runs the emulator at boot as a normal user, after the CAN bus is up (REQ-31).
+# The placeholders for the user and repo path are filled in by deploy/install.sh.
+
+[Unit]
+Description=Open Battery Emulator
+# Requires: if bringing the bus up fails, the emulator is not started.
+# After: start only once the bus step has finished.
+Requires=open-battery-emulator-can.service
+After=open-battery-emulator-can.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO@
+# The project's own Python from `uv sync`, so uv is not needed at runtime.
+ExecStart=@REPO@/.venv/bin/python -m emulator.engine --config @REPO@/config.yaml --status-every 10
+# Print status lines to the journal at once instead of in buffered chunks.
+Environment=PYTHONUNBUFFERED=1
+# Restart after a crash or error exit. A normal stop (systemctl stop sends
+# SIGTERM, the engine exits with 0) is not restarted.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

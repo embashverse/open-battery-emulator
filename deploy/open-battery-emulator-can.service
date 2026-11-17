@@ -1,0 +1,18 @@
+# Brings the CAN bus from config.yaml up at boot (REQ-30).
+# Runs as root, because only root may create or configure network devices.
+# The placeholders for the user and repo path are filled in by deploy/install.sh.
+
+[Unit]
+Description=Open Battery Emulator: bring the CAN bus up
+After=network-pre.target
+
+[Service]
+# oneshot: runs once and exits. RemainAfterExit keeps it "active" afterwards,
+# so the emulator service can depend on it.
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/.venv/bin/python -m interfaces.can.bring_up --config @REPO@/config.yaml
+
+[Install]
+WantedBy=multi-user.target

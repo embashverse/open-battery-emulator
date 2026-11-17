@@ -4,7 +4,7 @@ Reads config.yaml, picks the current (from an interface or simulated), runs the
 100 ms loop and hands each result to the enabled interfaces. Uses only pack.py.
 
 Run it from the project folder:
-    uv run python -m emulator.engine --config config.yaml --speed 1
+    uv run python -m emulator.engine --config config.yaml --speed 1 --status-every 1
 
 Units: SOC in percent (0 to 100), current in amps with discharge positive,
 temperature in degrees C, voltage in volts, time in seconds.
@@ -12,6 +12,7 @@ temperature in degrees C, voltage in volts, time in seconds.
 
 import argparse
 import importlib
+import signal
 import sys
 import time
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ from emulator.pack import (
 # --- 1. Constants -------------------------------------------------------------
 
 TICK_S = 0.1  # emulated time per step; the speed factor never changes this
-TICKS_PER_STATUS = 10  # one status line per second of emulated time
+TICKS_PER_SECOND = 10  # 1 s / TICK_S, used to print the status line every N s
 CONTRACT = ("start", "send", "read_current", "stop")  # interface functions
 
 
@@ -422,6 +423,7 @@ def run(
     clock=time.monotonic,
     sleep=time.sleep,
     output=print,
+    status_every_s: int = 1,
 ) -> None:
     """Call step() every TICK_S seconds of real time, divided by speed.
 
@@ -430,9 +432,11 @@ def run(
     once to catch up. Speed only changes how long the loop sleeps; every step
     still moves the pack by TICK_S of emulated time.
 
+    A status line is printed every status_every_s seconds of emulated time.
     max_ticks, clock, sleep and output let tests run the loop without waiting.
     """
     real_tick_s = TICK_S / speed
+    ticks_per_status = status_every_s * TICKS_PER_SECOND
     start_time = clock()
     ticks_done = 0
 
@@ -442,14 +446,29 @@ def run(
 
         send_to_interfaces(engine, result)
 
-        if engine.tick_count % TICKS_PER_STATUS == 0:
+        if engine.tick_count % ticks_per_status == 0:
             output(status_line(engine, result))
 
         next_deadline = start_time + ticks_done * real_tick_s
         sleep(max(0.0, next_deadline - clock()))
 
 
-# --- 10. Command line ---------------------------------------------------------
+# --- 10. Stopping on SIGTERM --------------------------------------------------
+# Ctrl+C raises KeyboardInterrupt. systemd stops a service with SIGTERM
+# instead, which by default ends Python at once, without calling stop() on the
+# interfaces. This handler turns SIGTERM into an exception, so both ways of
+# stopping take the same clean path in main() (REQ-33).
+
+
+class StopRequested(Exception):
+    """Raised by the SIGTERM handler to leave the loop."""
+
+
+def on_sigterm(signal_number, frame) -> None:
+    raise StopRequested
+
+
+# --- 11. Command line ---------------------------------------------------------
 
 
 def positive_speed(text: str) -> float:
@@ -459,6 +478,18 @@ def positive_speed(text: str) -> float:
         raise argparse.ArgumentTypeError("--speed must be a number") from None
     if value <= 0:
         raise argparse.ArgumentTypeError("--speed must be greater than 0")
+    return value
+
+
+def positive_whole_number(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--status-every must be a whole number"
+        ) from None
+    if value < 1:
+        raise argparse.ArgumentTypeError("--status-every must be at least 1")
     return value
 
 
@@ -476,6 +507,12 @@ def main(argv: list[str] | None = None) -> int:
         default=1.0,
         help="run faster than real time, e.g. 10 (default 1)",
     )
+    parser.add_argument(
+        "--status-every",
+        type=positive_whole_number,
+        default=1,
+        help="print the status line every N seconds of emulated time (default 1)",
+    )
     args = parser.parse_args(argv)
 
     # Config, battery file and interface start errors are shown as one line,
@@ -486,16 +523,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Config error: {error}", file=sys.stderr)
         return 1
 
+    previous_handler = signal.signal(signal.SIGTERM, on_sigterm)
     try:
-        run(engine, speed=args.speed)
-    except KeyboardInterrupt:
-        print()  # end the line after the "^C" the terminal shows
+        run(engine, speed=args.speed, status_every_s=args.status_every)
+    except (KeyboardInterrupt, StopRequested):
+        print()  # end the line after the "^C" the terminal shows on Ctrl+C
         print(summary_line(engine))
     except ValueError as error:  # an interface that refuses a value (CAN never does)
         print(f"Error: {error}", file=sys.stderr)
         return 1
     finally:
         stop_interfaces(engine)
+        signal.signal(signal.SIGTERM, previous_handler)
     return 0
 
 
