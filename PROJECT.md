@@ -41,7 +41,12 @@ open-battery-emulator/
 │   └── can/
 │       ├── __init__.py    exposes start, send, read_current, stop
 │       ├── can_bus.py
+│       ├── bring_up.py    brings the CAN bus up at boot (run as root)
 │       └── battery.dbc    default message definitions, replace with your own
+├── deploy/            run on the Pi as a service on boot
+│   ├── open-battery-emulator-can.service   brings the bus up (root)
+│   ├── open-battery-emulator.service       the emulator (normal user)
+│   └── install.sh                          installs or removes both services
 ├── webui/             optional: live values, current, edit and save config.yaml
 └── tests/             test_cell.py, test_pack.py, test_engine.py, ...
 ```
@@ -399,7 +404,8 @@ Terminal
 - **REQ-25** When run from the command line, the engine prints one status line per
   second of emulated time with elapsed time, state, pack current, voltage, average SOC,
   and lowest and highest cell with module and cell number. It shows `TIMEOUT` when the
-  timeout flag is set.
+  timeout flag is set. `--status-every N` prints the status line every N seconds of
+  emulated time (default 1).
 
 Web UI
 - **REQ-15** The web UI is optional. When enabled it shows current, SOC, voltages, state
@@ -424,14 +430,25 @@ Web UI
 Platform
 - **REQ-19** Runs on Linux with SocketCAN: `vcan0` on a laptop, `can0` on the Pi.
 
+Deployment
+- **REQ-30** The CAN bus is brought up at boot by a separate step run as root, reading
+  channel and bitrate from `config.yaml`. For a channel starting with `vcan` it loads the
+  vcan module and creates the device; otherwise it sets the bitrate with `restart-ms 100`,
+  so the controller recovers from bus off automatically, and brings the device up.
+- **REQ-31** The emulator starts at boot as a normal user (never root), only after the bus
+  is up, and restarts automatically if it stops with an error.
+- **REQ-32** One install script sets up both services on a Pi, and can also remove them.
+- **REQ-33** The engine stops cleanly on SIGTERM as well as Ctrl+C, calling `stop()` on
+  every interface.
+
 ## How we work (light V-model)
 
 Every requirement on the left has a check on the right:
 
 | Define | Check |
 |---|---|
-| Idea | Runs on the Pi with a real device on the bus (M5) |
-| Requirements | Each REQ has at least one test |
+| Idea | Runs on the Pi with a real device on the bus (v1.0) |
+| Requirements | Each REQ has at least one test, or a manual check where a test is not possible |
 | High level (`engine.py`) | `test_engine.py`: run many ticks from a config, check the whole result |
 | Mid level (`pack.py`) | `test_pack.py`: topology, current split, state machine |
 | Low level (`cell.py`) | `test_cell.py`: CSV loading, OCV, SOC, voltage, limits |
@@ -442,6 +459,22 @@ Rules:
    See coverage with `grep -rn "REQ-" tests/`
 3. One task per branch, merged by pull request. CI must be green.
 4. AI writes code, a human reviews and understands it before merging.
+5. Every requirement is verified by an automated test where possible, otherwise by a
+   manual check recorded in the table below.
+
+### Manual checks
+
+Some things only a real Pi with systemd can show: booting, rebooting, crashes. These are
+run by hand, following README "Run on a Raspberry Pi", and recorded here. The unit file
+contents are also checked automatically in `tests/test_deploy.py`.
+
+| REQ | Steps | Expected | Date | Result |
+|---|---|---|---|---|
+| REQ-32 | `sudo deploy/install.sh` | both services installed, enabled and started, no errors | | |
+| REQ-31 | `systemctl status open-battery-emulator` | active (running), as the normal user (not root); `journalctl -u open-battery-emulator` shows a status line every 10 s | | |
+| REQ-31 | `sudo reboot`, log in, `systemctl status open-battery-emulator` | running again after the reboot, `candump vcan0` shows frames | | |
+| REQ-31 | `sudo systemctl kill -s KILL open-battery-emulator`, wait, `systemctl status open-battery-emulator` | running again within about 5 s, with a new PID | | |
+| REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` | | |
 
 ## Milestones
 
@@ -451,9 +484,9 @@ Rules:
 | M1 | Cell and pack | `cell.py` and `pack.py` pass their tests; 100 A for 1 h on a 100 Ah cell takes SOC from 100 % to 0 %; every state transition, cell variation, Set SOC and Hold SOC tested |
 | M2 | Engine | engine runs in the terminal from `config.yaml` with simulated current and prints values |
 | M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
-| M4 | Pi | runs on the Pi as a service on boot with a CAN adapter; another device receives and sends |
+| M4 | Pi | runs on the Pi as a service on boot with `vcan0`, survives a reboot, restarts after a crash |
 | M5 | Web UI | optional page shows live values, changes the simulated current, saves settings to `config.yaml`, and edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
-| v1.0 | Release | README quick start works, every REQ has a passing test |
+| v1.0 | Release | real hardware test with an MCP2515 HAT on the Pi and a CANable on a laptop (frames received and current sent over real wires), README quick start works, every REQ is verified: a passing test, or a manual check recorded in PROJECT.md |
 
 ## Later
 

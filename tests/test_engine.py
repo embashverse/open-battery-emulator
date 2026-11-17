@@ -6,7 +6,9 @@ conftest.py, so these tests do not depend on batteries/ or the real
 config.yaml. No test sleeps: the loop gets a fake clock.
 """
 
+import os
 import re
+import signal
 import sys
 import types
 from pathlib import Path
@@ -215,13 +217,34 @@ def test_loop_prints_one_status_line_per_emulated_second(tmp_path):
     assert lines[2].startswith("t=     3.0 s")
 
 
+def test_status_every_10_prints_every_100_ticks(tmp_path):
+    """Checks REQ-25: --status-every 10 prints one line every 10 s (100 ticks)."""
+    path = write_config(tmp_path)
+    engine = start_engine(path)
+    fake = FakeClock()
+    lines = []
+
+    run(
+        engine,
+        max_ticks=250,
+        clock=fake.clock,
+        sleep=fake.sleep,
+        output=lines.append,
+        status_every_s=10,
+    )
+
+    assert len(lines) == 2
+    assert lines[0].startswith("t=    10.0 s")
+    assert lines[1].startswith("t=    20.0 s")
+
+
 # --- Interfaces ---------------------------------------------------------------
 
 
-def make_fake_interface(monkeypatch, calls, provides_current=True):
-    """Put a fake interfaces.fake in sys.modules; its four functions log calls.
+def make_fake_interface(monkeypatch, calls, provides_current=True, name="fake"):
+    """Put a fake interfaces.<name> in sys.modules; its four functions log calls.
 
-    The engine can then only find it the normal way: by the name "fake" under
+    The engine can then only find it the normal way: by its name under
     interfaces: in config.yaml, through importlib. start() returns
     provides_current, as the contract says.
     """
@@ -230,12 +253,12 @@ def make_fake_interface(monkeypatch, calls, provides_current=True):
         calls.append(("start", settings))
         return provides_current
 
-    fake = types.ModuleType("interfaces.fake")
+    fake = types.ModuleType(f"interfaces.{name}")
     fake.start = start
     fake.send = lambda result: calls.append(("send", result))
     fake.read_current = lambda: None
-    fake.stop = lambda: calls.append(("stop", None))
-    monkeypatch.setitem(sys.modules, "interfaces.fake", fake)
+    fake.stop = lambda: calls.append(("stop", name))
+    monkeypatch.setitem(sys.modules, f"interfaces.{name}", fake)
     return fake
 
 
@@ -407,6 +430,33 @@ def test_status_line_shows_timeout(tmp_path, monkeypatch):
 
     simulated = start_engine(write_config(tmp_path / "sim"))
     assert "TIMEOUT" not in status_line(simulated, step(simulated))
+
+
+def test_sigterm_stops_the_engine_and_every_interface(tmp_path, monkeypatch, capsys):
+    """Checks REQ-33: SIGTERM (how systemd stops a service) ends the loop cleanly:
+    exit code 0, summary printed, stop() called on every interface."""
+    calls = []
+    first = make_fake_interface(monkeypatch, calls, name="first")
+    make_fake_interface(monkeypatch, calls, name="second")
+
+    def send_then_sigterm(result):
+        calls.append(("send", result))
+        os.kill(os.getpid(), signal.SIGTERM)  # as if systemd stopped the service
+
+    first.send = send_then_sigterm
+    path = write_config(
+        tmp_path,
+        {"interfaces.first": {"enabled": True}, "interfaces.second": {"enabled": True}},
+    )
+    handler_before = signal.getsignal(signal.SIGTERM)
+
+    exit_code = main(["--config", str(path)])
+
+    assert exit_code == 0
+    assert "Stopped after 0.1 s emulated (1 steps)" in capsys.readouterr().out
+    stopped = [name for call, name in calls if call == "stop"]
+    assert sorted(stopped) == ["first", "second"]
+    assert signal.getsignal(signal.SIGTERM) is handler_before  # handler restored
 
 
 def test_speed_above_1_without_interfaces_is_allowed(tmp_path):
