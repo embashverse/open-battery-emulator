@@ -4,7 +4,9 @@ version = "0.0.1"
 description = "A battery pack in software for the Raspberry Pi, with BMS style data on CAN."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "ruamel-yaml>=0.19.1",
+]
 
 [dependency-groups]
 dev = [

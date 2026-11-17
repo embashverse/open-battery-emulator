@@ -328,6 +328,11 @@ Structure
   `read_current`) and is switched on in `config.yaml`. Adding one needs no change in
   `emulator/`. The web UI only reads the result and may set the simulated current.
 
+Terminal
+- **REQ-25** When run from the command line, the engine prints one status line per
+  second of emulated time with elapsed time, state, pack current, voltage, average SOC,
+  and lowest and highest cell with module and cell number.
+
 Web UI
 - **REQ-15** The web UI is optional. When enabled it shows current, SOC, voltages, state
   and limits live, and can change the source and the simulated current.
