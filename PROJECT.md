@@ -470,11 +470,11 @@ contents are also checked automatically in `tests/test_deploy.py`.
 
 | REQ | Steps | Expected | Date | Result |
 |---|---|---|---|---|
-| REQ-32 | `sudo deploy/install.sh` | both services installed, enabled and started, no errors | | |
-| REQ-31 | `systemctl status open-battery-emulator` | active (running), as the normal user (not root); `journalctl -u open-battery-emulator` shows a status line every 10 s | | |
-| REQ-31 | `sudo reboot`, log in, `systemctl status open-battery-emulator` | running again after the reboot, `candump vcan0` shows frames | | |
-| REQ-31 | `sudo systemctl kill -s KILL open-battery-emulator`, wait, `systemctl status open-battery-emulator` | running again within about 5 s, with a new PID | | |
-| REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` | | |
+| REQ-32 | `sudo deploy/install.sh` | both services installed, enabled and started, no errors |19.11.2026 |Pass |
+| REQ-31 | `systemctl status open-battery-emulator` | active (running), as the normal user (not root); `journalctl -u open-battery-emulator` shows a status line every 10 s |19.11.2026 |Pass |
+| REQ-31 | `sudo reboot`, log in, `systemctl status open-battery-emulator` | running again after the reboot, `candump vcan0` shows frames |19.11.2026 |Pass |
+| REQ-31 | `sudo systemctl kill -s KILL open-battery-emulator`, wait, `systemctl status open-battery-emulator` | running again within about 5 s, with a new PID |19.11.2026 |Pass |
+| REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` |19.11.2026 |Pass |
 
 ## Milestones
 
