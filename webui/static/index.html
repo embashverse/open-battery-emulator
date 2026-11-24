@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Battery Emulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Battery Emulator</h1>
+    <span id="connection" class="badge">connecting...</span>
+  </header>
+
+  <main>
+    <!-- 1. Live values -->
+    <section class="tiles">
+      <div class="tile"><span class="label">State</span><span id="state" class="value">-</span></div>
+      <div class="tile"><span class="label">Current</span><span id="current" class="value">-</span></div>
+      <div class="tile"><span class="label">Voltage</span><span id="voltage" class="value">-</span></div>
+      <div class="tile"><span class="label">SOC</span><span id="soc" class="value">-</span></div>
+      <div class="tile"><span class="label">Lowest cell</span><span id="lowest" class="value">-</span></div>
+      <div class="tile"><span class="label">Highest cell</span><span id="highest" class="value">-</span></div>
+      <div class="tile"><span class="label">Max charge</span><span id="max-charge" class="value">-</span></div>
+      <div class="tile"><span class="label">Max discharge</span><span id="max-discharge" class="value">-</span></div>
+      <div class="tile"><span class="label">Elapsed</span><span id="elapsed" class="value">-</span></div>
+      <div class="tile flags">
+        <span class="label">Flags</span>
+        <span id="flag-timeout" class="flag">TIMEOUT</span>
+        <span id="flag-temp" class="flag">TEMPERATURE</span>
+      </div>
+    </section>
+
+    <!-- 2. Cell voltages, one row per module -->
+    <section class="card">
+      <h2>Cell voltages</h2>
+      <div id="grid" class="grid"></div>
+      <p id="cell-info" class="hint">Tap or hover a cell to see its voltage.</p>
+    </section>
+
+    <!-- 3. Controls -->
+    <section class="card">
+      <h2>Controls</h2>
+      <p class="note">Changes here are live only and are not saved to config.yaml.</p>
+
+      <div class="control">
+        <label for="source">Current source</label>
+        <select id="source"></select>
+      </div>
+
+      <form id="current-form" class="control">
+        <label for="current-input">Simulated current (A, discharge positive)</label>
+        <div class="row">
+          <input id="current-input" type="number" step="any" inputmode="decimal">
+          <button type="submit">Set</button>
+        </div>
+      </form>
+
+      <form id="soc-form" class="control">
+        <label for="soc-input">Set SOC (%)</label>
+        <div class="row">
+          <input id="soc-input" type="number" step="any" min="0" max="100" inputmode="decimal">
+          <button type="submit">Set</button>
+        </div>
+      </form>
+
+      <div class="control">
+        <label class="check"><input id="hold" type="checkbox"> Hold SOC</label>
+      </div>
+
+      <p id="message" class="message" role="status"></p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
