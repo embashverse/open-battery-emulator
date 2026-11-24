@@ -48,6 +48,9 @@ open-battery-emulator/
 │   ├── open-battery-emulator.service       the emulator (normal user)
 │   └── install.sh                          installs or removes both services
 ├── webui/             optional: live values, current, edit and save config.yaml
+│   ├── __init__.py    exposes start, stop
+│   ├── server.py      small web server (standard library), runs in a thread
+│   └── static/        index.html, style.css, app.js (no build step, no internet)
 └── tests/             test_cell.py, test_pack.py, test_engine.py, ...
 ```
 
@@ -83,6 +86,24 @@ Before calling `start`, the engine makes relative file paths full: any relative 
 setting that names an existing file next to `config.yaml` (like `dbc:`) is passed with its
 full path, so it works whatever folder the emulator is started from. Every other setting
 is passed unchanged.
+
+### Web UI contract
+
+The web UI is a Python package `webui/` whose `__init__.py` exposes two functions:
+
+```
+start(host, port, handle)   start the web server in a background thread. handle has
+                            two functions: read_state() returns the latest pack result
+                            and live settings as a plain dict, send_command(command)
+                            checks one command and queues it (raises CommandError if
+                            invalid). Returns the port really used (port 0 = any free one)
+stop()                      stop the server and its thread (called once on exit)
+```
+
+The engine imports `webui` with `importlib`, only when `webui.enabled` is true, so with
+the web UI off it is never loaded. It passes the handle, never the Engine itself, so the
+web thread cannot change the pack (REQ-34). Commands are applied by the engine at the
+start of the next tick.
 
 ## config.yaml
 
@@ -129,6 +150,7 @@ interfaces:
 
 webui:
   enabled: false
+  host: 0.0.0.0            # 0.0.0.0 = reachable from other devices, 127.0.0.1 = this computer only
   port: 8080
 ```
 
@@ -394,8 +416,8 @@ Structure
 - **REQ-14** Every interface follows the interface contract (`start`, `send`,
   `read_current`, `stop`) and is switched on in `config.yaml`. The engine loads it by
   name with `importlib` and never imports anything interface specific. Adding one needs
-  no change in `emulator/`. The web UI only reads the result and may set the simulated
-  current.
+  no change in `emulator/`. The web UI only reads the result and queues commands
+  (REQ-34).
 - **REQ-26** When any interface is enabled, `--speed` must be 1, because devices on the
   bus expect real time cycle times. Otherwise the start stops with an error naming
   `--speed`.
@@ -409,7 +431,17 @@ Terminal
 
 Web UI
 - **REQ-15** The web UI is optional. When enabled it shows current, SOC, voltages, state
-  and limits live, and can change the source and the simulated current.
+  and limits live, and can change the source and the simulated current. When
+  `webui.enabled` is true, the engine starts a small web server in a background thread in
+  the same process. When false, nothing about the engine changes. `webui.host` (default
+  `0.0.0.0`) and `webui.port` (default 8080) come from `config.yaml`. Live changes from
+  the page (source, simulated current, Set SOC, Hold SOC) are not saved to `config.yaml`,
+  and the page says so.
+- **REQ-34** Only the engine thread changes the pack. The web server only reads the
+  latest result and puts commands in a queue; the engine applies queued commands at the
+  start of the next tick. The web UI gets a handle with two functions (read the state,
+  queue a command), never the Engine itself.
+- **REQ-35** The page works without internet: no external scripts, styles or fonts.
 - **REQ-16** `config.yaml` is the only place settings are stored. The web UI loads its
   settings form from the file, and a Save button checks the values and writes them back
   to the file, keeping comments. The emulator then restarts with the new settings.
@@ -475,6 +507,8 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-31 | `sudo reboot`, log in, `systemctl status open-battery-emulator` | running again after the reboot, `candump vcan0` shows frames |19.11.2026 |Pass |
 | REQ-31 | `sudo systemctl kill -s KILL open-battery-emulator`, wait, `systemctl status open-battery-emulator` | running again within about 5 s, with a new PID |19.11.2026 |Pass |
 | REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` |19.11.2026 |Pass |
+| REQ-15 | `webui.enabled: true`, start the emulator, open `http://localhost:8080` on the laptop | values update about twice a second, the cell grid shows every module, Set SOC / Hold SOC / simulated current change the values on the next update, SOC 150 shows an error | | |
+| REQ-15 | on the Pi, open `http://battery.local:8080` on a phone on the same network | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
 
 ## Milestones
 

@@ -40,4 +40,5 @@ interfaces:
 
 webui:
   enabled: false
+  host: 0.0.0.0            # 0.0.0.0 = reachable from other devices, 127.0.0.1 = this computer only
   port: 8080

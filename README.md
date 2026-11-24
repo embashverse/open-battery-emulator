@@ -4,7 +4,8 @@ A battery pack in software for the Raspberry Pi. Current goes in, the pack react
 real battery, and BMS style data goes out on CAN. Signals only, no real power.
 
 > Early development. The emulator runs in the terminal, sends pack data on CAN and takes
-> its current either simulated or from a current command on CAN.
+> its current either simulated or from a current command on CAN. An optional web page
+> shows live values and has test controls.
 
 ## What it does
 
@@ -21,7 +22,7 @@ real battery, and BMS style data goes out on CAN. Signals only, no real power.
 - `batteries/` battery types
 - `emulator/` the model: `cell.py`, `pack.py`, `engine.py`
 - `interfaces/` CAN today, more later
-- `webui/` optional live view
+- `webui/` optional live view and test controls in the browser
 
 Requirements, design and plan: [PROJECT.md](PROJECT.md)
 
@@ -119,6 +120,35 @@ warns and keeps running.
 
 Ctrl+C (or SIGTERM, which is how systemd stops it) stops it with a one line summary. A
 bad setting in `config.yaml` stops it at start with a message naming the setting.
+
+### Web UI
+
+An optional page in the browser shows the live values (state, current, voltage, SOC,
+lowest and highest cell, limits, flags), a coloured grid of every cell voltage, and
+controls for the current source, the simulated current, Set SOC and Hold SOC. It needs
+no internet: everything comes from the emulator itself.
+
+Turn it on in `config.yaml` and start (or restart) the emulator:
+
+```yaml
+webui:
+  enabled: true
+  host: 0.0.0.0     # 0.0.0.0 = reachable from other devices, 127.0.0.1 = this computer only
+  port: 8080
+```
+
+The emulator prints `Web UI on http://0.0.0.0:8080`. Then open:
+
+- on the laptop it runs on: `http://localhost:8080`
+- on the Pi, from a laptop or phone on the same network: `http://battery.local:8080`
+  (the hostname you gave the Pi), or `http://<the Pi's IP address>:8080`
+
+Changes made on the page are live only: they are **not** saved to `config.yaml`, so a
+restart goes back to the file's values. (Saving settings from the page comes later.)
+
+> **No login.** Anyone who can reach the port can see the values and change the current.
+> Only run the web UI on a trusted network, or set `host: 127.0.0.1` so only the computer
+> itself can open it.
 
 ## Run on a Raspberry Pi
 

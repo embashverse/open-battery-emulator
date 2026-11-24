@@ -8,7 +8,8 @@ Rules for AI coding agents in this repo.
   Each level only uses the one below it. Do not add files there without asking.
 - Inside each file, group code in clearly commented sections in the order it runs.
 - Plain functions and dataclasses. No clever tricks. Readable beats short.
-- `emulator/` never imports from `interfaces/` or `webui/`.
+- `emulator/` never imports from `interfaces/` or `webui/`. The engine loads `webui` by
+  name with importlib, only when enabled, and passes it a handle, never the Engine.
 - Settings come from `config.yaml`, battery data from `batteries/` CSV files, CAN messages
   from the DBC file. Never hard code any of these.
 - The emulator must run without the web UI.

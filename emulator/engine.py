@@ -3,6 +3,10 @@
 Reads config.yaml, picks the current (from an interface or simulated), runs the
 100 ms loop and hands each result to the enabled interfaces. Uses only pack.py.
 
+When webui.enabled is true it also starts the web UI (loaded by name, like the
+interfaces) and gives it a small handle to read the state and queue commands.
+Only this engine thread ever changes the pack (REQ-34).
+
 Run it from the project folder:
     uv run python -m emulator.engine --config config.yaml --speed 1 --status-every 1
 
@@ -11,11 +15,15 @@ temperature in degrees C, voltage in volts, time in seconds.
 """
 
 import argparse
+import copy
 import importlib
+import math
+import queue
 import signal
 import sys
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import ModuleType
 
@@ -28,6 +36,8 @@ from emulator.pack import (
     PackSettings,
     build_pack,
     pack_info,
+    set_hold_soc,
+    set_soc,
     tick,
 )
 
@@ -36,6 +46,11 @@ from emulator.pack import (
 TICK_S = 0.1  # emulated time per step; the speed factor never changes this
 TICKS_PER_SECOND = 10  # 1 s / TICK_S, used to print the status line every N s
 CONTRACT = ("start", "send", "read_current", "stop")  # interface functions
+WEBUI_CONTRACT = ("start", "stop")  # web UI functions
+WEBUI_DEFAULT_HOST = "0.0.0.0"  # reachable from other devices on the network
+WEBUI_DEFAULT_PORT = 8080
+# Commands the web UI can queue (REQ-21, REQ-34), checked in check_command().
+COMMANDS = ("set_source", "set_simulated_current", "set_soc", "hold_soc")
 
 
 # --- 2. Data shapes -----------------------------------------------------------
@@ -43,6 +58,10 @@ CONTRACT = ("start", "send", "read_current", "stop")  # interface functions
 
 class ConfigError(ValueError):
     """A bad value in config.yaml. The message starts with the setting name."""
+
+
+class CommandError(ValueError):
+    """A command from the web UI that cannot be applied. The message says why."""
 
 
 @dataclass
@@ -55,6 +74,9 @@ class EngineConfig:
     simulated_a: float
     timeout_ms: float  # interface current timeout (REQ-10)
     interfaces: list[tuple[str, dict]]  # (name, settings) of each enabled one
+    webui_enabled: bool = False
+    webui_host: str = WEBUI_DEFAULT_HOST
+    webui_port: int = WEBUI_DEFAULT_PORT
 
 
 @dataclass
@@ -64,10 +86,34 @@ class Engine:
     interfaces: list[ModuleType] = field(default_factory=list)  # started ones
     tick_count: int = 0
     last_result: PackResult | None = None
+    # Live settings: they start from config.yaml and the web UI can change them
+    # while running. They are never written back to config.yaml.
+    current_source: str = "simulated"
+    simulated_a: float = 0.0
     # Current from an interface (REQ-08, REQ-10). Unused when simulated.
-    current_interface: ModuleType | None = None  # the one named by current.source
+    current_interface: ModuleType | None = None  # the one named by current_source
+    current_sources: dict[str, ModuleType] = field(default_factory=dict)  # can provide
     command_a: float = 0.0  # the last current command received
     command_tick: int | None = None  # tick_count when it arrived; None = none yet
+    # Web UI (REQ-15, REQ-34). The web thread only puts into `commands` and
+    # reads `live_state`; everything else is used by the engine thread only.
+    commands: queue.Queue = field(default_factory=queue.Queue)
+    live_state: dict | None = None  # rebuilt every tick, never changed afterwards
+    webui: ModuleType | None = None  # the started web UI, None when disabled
+    webui_port: int | None = None  # the port really used
+
+
+@dataclass
+class EngineHandle:
+    """All the web UI gets from the engine (REQ-34): two functions, no Engine.
+
+    read_state() returns a copy of the latest result and live settings.
+    send_command(command) checks one command and queues it for the next tick,
+    or raises CommandError.
+    """
+
+    read_state: Callable[[], dict]
+    send_command: Callable[[dict], None]
 
 
 # --- 3. Reading config.yaml ---------------------------------------------------
@@ -206,6 +252,32 @@ def resolve_paths(settings: dict, config_folder: Path) -> dict:
     return resolved
 
 
+def check_webui(raw: dict) -> tuple[bool, str, int]:
+    """REQ-15: enabled, host and port of the web UI.
+
+    No webui section means it is off. host and port have defaults. Port 0
+    means "any free port" (used by the tests).
+    """
+    section = raw.get("webui")
+    if section is None:
+        return False, WEBUI_DEFAULT_HOST, WEBUI_DEFAULT_PORT
+    if not isinstance(section, dict):
+        raise ConfigError("webui must contain its settings")
+
+    enabled = section.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("webui.enabled must be true or false")
+
+    host = section.get("host", WEBUI_DEFAULT_HOST)
+    if not isinstance(host, str) or not host:
+        raise ConfigError("webui.host must be an address like 0.0.0.0 or 127.0.0.1")
+
+    port = section.get("port", WEBUI_DEFAULT_PORT)
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        raise ConfigError("webui.port must be a whole number from 0 to 65535")
+    return enabled, host, int(port)
+
+
 def check_config(raw: dict, config_folder: Path) -> EngineConfig:
     """Check every setting the engine uses and collect them in one place."""
     battery_folder = check_battery(raw, config_folder)
@@ -228,6 +300,7 @@ def check_config(raw: dict, config_folder: Path) -> EngineConfig:
     # Interfaces first: current.source may name one of them.
     interfaces = check_interfaces(raw, config_folder)
     enabled_names = [name for name, _ in interfaces]
+    webui_enabled, webui_host, webui_port = check_webui(raw)
 
     return EngineConfig(
         battery_folder=battery_folder,
@@ -236,6 +309,9 @@ def check_config(raw: dict, config_folder: Path) -> EngineConfig:
         simulated_a=get_number(raw, "current", "simulated_a"),
         timeout_ms=get_number(raw, "current", "timeout_ms", above=0),
         interfaces=interfaces,
+        webui_enabled=webui_enabled,
+        webui_host=webui_host,
+        webui_port=webui_port,
     )
 
 
@@ -243,9 +319,11 @@ def check_config(raw: dict, config_folder: Path) -> EngineConfig:
 
 
 def start_engine(config_path: Path, speed: float = 1.0) -> Engine:
-    """Read and check config.yaml, build the pack, then start the interfaces.
+    """Read and check config.yaml, build the pack, start the interfaces, then
+    the web UI if enabled (it needs to know which sources can provide current).
 
-    Every check runs before any port is opened.
+    Every check runs before any port is opened. If the web UI cannot start,
+    the interfaces are stopped again.
     """
     config_path = Path(config_path)
     raw = read_config_file(config_path)
@@ -253,9 +331,26 @@ def start_engine(config_path: Path, speed: float = 1.0) -> Engine:
     check_speed(config.interfaces, speed)
     modules = [load_interface(name) for name, _ in config.interfaces]
     pack = build_pack(config.battery_folder, config.pack_settings)
-    engine = Engine(config=config, pack=pack)
+    engine = Engine(
+        config=config,
+        pack=pack,
+        current_source=config.current_source,
+        simulated_a=config.simulated_a,
+    )
     start_interfaces(engine, modules)
+    engine.live_state = make_live_state(engine, None)  # before the first tick
+    try:
+        start_webui(engine)
+    except BaseException:
+        stop_interfaces(engine)
+        raise
     return engine
+
+
+def stop_engine(engine: Engine) -> None:
+    """Stop the web UI first (no more commands), then every interface."""
+    stop_webui(engine)
+    stop_interfaces(engine)
 
 
 # --- 6. Interfaces ------------------------------------------------------------
@@ -294,7 +389,8 @@ def load_interface(name: str) -> ModuleType:
 def start_interfaces(engine: Engine, modules: list[ModuleType]) -> None:
     """Call start(settings, pack_info) on each. If one fails, stop the others.
 
-    start() returns True if the interface can provide current commands. The
+    start() returns True if the interface can provide current commands. Those
+    are remembered in current_sources, so the web UI can switch to them. The
     interface named by current.source must, otherwise the start stops here.
     It is remembered: step() reads the current from it.
     """
@@ -306,6 +402,8 @@ def start_interfaces(engine: Engine, modules: list[ModuleType]) -> None:
             stop_interfaces(engine)
             raise
         engine.interfaces.append(module)
+        if provides_current is True:
+            engine.current_sources[name] = module
 
         if name != engine.config.current_source:
             continue
@@ -328,29 +426,177 @@ def stop_interfaces(engine: Engine) -> None:
     while engine.interfaces:
         engine.interfaces.pop().stop()
     engine.current_interface = None
+    engine.current_sources = {}
 
 
-# --- 7. One tick --------------------------------------------------------------
+# --- 7. Web UI ----------------------------------------------------------------
+# Loaded by name with importlib, only when webui.enabled is true, so the
+# emulator never needs webui/ to run (REQ-15). It gets an EngineHandle with
+# two functions and never the Engine, so the web thread cannot change the
+# pack (REQ-34).
+
+
+def start_webui(engine: Engine) -> None:
+    """Import webui, check its contract and start it with a handle."""
+    config = engine.config
+    if not config.webui_enabled:
+        return
+    module = importlib.import_module("webui")
+    for function in WEBUI_CONTRACT:
+        if not callable(getattr(module, function, None)):
+            raise ConfigError(f"webui: webui/__init__.py has no {function}()")
+    engine.webui_port = module.start(
+        config.webui_host, config.webui_port, make_handle(engine)
+    )
+    engine.webui = module
+    print(f"Web UI on http://{config.webui_host}:{engine.webui_port}")
+
+
+def make_handle(engine: Engine) -> EngineHandle:
+    """The two functions the web UI may call. Both are safe from another thread:
+    one copies the latest published state, the other only puts into a queue."""
+
+    def read_state() -> dict:
+        return copy.deepcopy(engine.live_state)
+
+    def send_command(command: dict) -> None:
+        queue_command(engine, command)
+
+    return EngineHandle(read_state=read_state, send_command=send_command)
+
+
+def stop_webui(engine: Engine) -> None:
+    if engine.webui is not None:
+        engine.webui.stop()
+        engine.webui = None
+
+
+# --- 8. Commands from the web UI ----------------------------------------------
+# Checked on the web thread as they arrive, so a bad one gets a clear answer
+# at once. Applied on the engine thread at the start of the next tick (REQ-34).
+
+
+def check_command(engine: Engine, command) -> dict:
+    """A clean copy of one command like {"command": "set_soc", "value": 50},
+    or CommandError with a message saying what is wrong."""
+    if not isinstance(command, dict):
+        raise CommandError(
+            'a command must be an object like {"command": ..., "value": ...}'
+        )
+    name = command.get("command")
+    value = command.get("value")
+
+    if name == "set_source":
+        # current_sources is filled once at start and only read here.
+        available = ["simulated", *engine.current_sources]
+        if value not in available:
+            raise CommandError(
+                f"source '{value}' must be 'simulated' or an interface that can "
+                f"provide current (available: {', '.join(available)})"
+            )
+    elif name == "set_simulated_current":
+        value = check_command_number(name, value)
+    elif name == "set_soc":
+        value = check_command_number(name, value)
+        if not 0 <= value <= 100:
+            raise CommandError(f"set_soc: SOC must be between 0 and 100, got {value}")
+    elif name == "hold_soc":
+        if not isinstance(value, bool):
+            raise CommandError("hold_soc: value must be true or false")
+    else:
+        raise CommandError(f"unknown command '{name}' (known: {', '.join(COMMANDS)})")
+    return {"command": name, "value": value}
+
+
+def check_command_number(name: str, value) -> float:
+    # bool counts as a number in Python; JSON also allows NaN and Infinity.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CommandError(f"{name}: value must be a number")
+    if not math.isfinite(value):
+        raise CommandError(f"{name}: value must be a finite number")
+    return float(value)
+
+
+def queue_command(engine: Engine, command) -> None:
+    """Web thread: check the command, then leave it for the engine thread."""
+    engine.commands.put(check_command(engine, command))
+
+
+def apply_commands(engine: Engine) -> None:
+    """Engine thread: apply every queued command, oldest first."""
+    while True:
+        try:
+            command = engine.commands.get_nowait()
+        except queue.Empty:
+            return
+        name, value = command["command"], command["value"]
+        if name == "set_source":
+            switch_source(engine, value)
+        elif name == "set_simulated_current":
+            engine.simulated_a = value
+        elif name == "set_soc":
+            set_soc(engine.pack, value)
+        elif name == "hold_soc":
+            set_hold_soc(engine.pack, value)
+
+
+def switch_source(engine: Engine, source: str) -> None:
+    """Change where the current comes from.
+
+    An interface starts in timeout, like at start (REQ-10): a command that
+    waited while it was not the source is read once and thrown away, so only
+    a fresh one counts.
+    """
+    engine.current_source = source
+    engine.current_interface = engine.current_sources.get(source)
+    engine.command_a = 0.0
+    engine.command_tick = None
+    if engine.current_interface is not None:
+        engine.current_interface.read_current()  # drop anything old
+
+
+# --- 9. One tick --------------------------------------------------------------
 
 
 def step(engine: Engine) -> PackResult:
     """Run exactly one tick of TICK_S seconds. No sleeping, no printing.
 
-    First pick the current (simulated or from an interface, with the timeout),
-    then move the pack. The deadband is applied afterwards in pack.py.
+    First apply the commands the web UI queued since the last tick (REQ-34),
+    then pick the current (simulated or from an interface, with the timeout),
+    then move the pack. The deadband is applied afterwards in pack.py. Last,
+    publish a fresh live state for the web UI.
     """
+    apply_commands(engine)
     current_a, timed_out = pick_current(engine)
     result = tick(engine.pack, current_a, TICK_S)
     result.current_timeout = timed_out  # pack.py knows nothing about sources
     engine.tick_count += 1
     engine.last_result = result
+    engine.live_state = make_live_state(engine, result)
     return result
+
+
+def make_live_state(engine: Engine, result: PackResult | None) -> dict:
+    """The latest result and live settings as plain values (ready for JSON).
+
+    A new dict every tick, never changed after it is published: the web
+    thread reads it while the engine thread is already building the next one.
+    """
+    return {
+        "result": None if result is None else asdict(result),
+        "elapsed_s": elapsed_s(engine),
+        "current_source": engine.current_source,
+        "simulated_a": engine.simulated_a,
+        "hold_soc": engine.pack.hold_soc,
+        "sources": ["simulated", *engine.current_sources],
+    }
 
 
 def pick_current(engine: Engine) -> tuple[float, bool]:
     """The current for this tick and whether the timeout flag is set.
 
-    Simulated: the value from config.yaml, like a command every tick (REQ-09).
+    Simulated: the live simulated current (from config.yaml, or changed in the
+    web UI), like a command every tick (REQ-09).
     Interface: a new value from read_current() becomes the current and resets
     the timeout. With nothing new, the last command is held until more than
     timeout_ms has passed; then the current is 0 and the flag is set (REQ-10).
@@ -360,7 +606,7 @@ def pick_current(engine: Engine) -> tuple[float, bool]:
     enabled, --speed is always 1 (REQ-26), so that equals real time.
     """
     if engine.current_interface is None:
-        return engine.config.simulated_a, False
+        return engine.simulated_a, False
 
     new_value = engine.current_interface.read_current()
     if new_value is not None:
@@ -380,7 +626,7 @@ def elapsed_s(engine: Engine) -> float:
     return engine.tick_count * TICK_S
 
 
-# --- 8. Status line -----------------------------------------------------------
+# --- 10. Status line ----------------------------------------------------------
 
 
 def status_line(engine: Engine, result: PackResult) -> str:
@@ -413,7 +659,7 @@ def summary_line(engine: Engine) -> str:
     return text
 
 
-# --- 9. The loop --------------------------------------------------------------
+# --- 11. The loop -------------------------------------------------------------
 
 
 def run(
@@ -453,7 +699,7 @@ def run(
         sleep(max(0.0, next_deadline - clock()))
 
 
-# --- 10. Stopping on SIGTERM --------------------------------------------------
+# --- 12. Stopping on SIGTERM --------------------------------------------------
 # Ctrl+C raises KeyboardInterrupt. systemd stops a service with SIGTERM
 # instead, which by default ends Python at once, without calling stop() on the
 # interfaces. This handler turns SIGTERM into an exception, so both ways of
@@ -468,7 +714,7 @@ def on_sigterm(signal_number, frame) -> None:
     raise StopRequested
 
 
-# --- 11. Command line ---------------------------------------------------------
+# --- 13. Command line ---------------------------------------------------------
 
 
 def positive_speed(text: str) -> float:
@@ -533,7 +779,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {error}", file=sys.stderr)
         return 1
     finally:
-        stop_interfaces(engine)
+        stop_engine(engine)  # web UI and every interface
         signal.signal(signal.SIGTERM, previous_handler)
     return 0
 
