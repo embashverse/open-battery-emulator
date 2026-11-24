@@ -22,6 +22,7 @@ from emulator.cell import (
     cell_voltage,
     current_limits,
     load_battery,
+    lookup,
     open_circuit_voltage,
     update_cell,
 )
@@ -33,6 +34,10 @@ CHARGING = "CHARGING"
 DISCHARGING = "DISCHARGING"
 FULL = "FULL"
 EMPTY = "EMPTY"
+
+# Where the nominal cell voltage is read from the discharge OCV table.
+NOMINAL_SOC_PCT = 50
+NOMINAL_TEMP_C = 25
 
 
 # --- 2. Data shapes -----------------------------------------------------------
@@ -125,6 +130,14 @@ class PackInfo:
     max_discharge_a: float  # P x the highest value in limit_discharge.csv
 
 
+@dataclass
+class BatterySummary:
+    """Two numbers per battery type, for the pack summary in the web UI."""
+
+    capacity_ah: float  # from cell.csv
+    nominal_v: float  # discharge OCV at NOMINAL_SOC_PCT and NOMINAL_TEMP_C
+
+
 # --- 3. Building the pack (once, at start) ------------------------------------
 
 
@@ -170,6 +183,18 @@ def make_varied_cell(
         capacity_ah=battery.capacity_ah * (1 + capacity_spread / 100),
         r0_ohm=battery.r0_ohm * (1 + r0_spread / 100),
         soc_pct=clamp_soc(settings.start_soc_pct + soc_spread),
+    )
+
+
+def battery_summary(battery_folder: Path) -> BatterySummary:
+    """Capacity and nominal cell voltage of a battery folder.
+
+    Nominal voltage is taken as the discharge OCV at 50 % SOC and 25 degC.
+    """
+    battery = load_battery(battery_folder)
+    return BatterySummary(
+        capacity_ah=battery.capacity_ah,
+        nominal_v=lookup(battery.ocv_discharge, NOMINAL_SOC_PCT, NOMINAL_TEMP_C),
     )
 
 

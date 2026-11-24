@@ -101,7 +101,7 @@ def test_webui_disabled_starts_no_server_or_thread(tmp_path, monkeypatch):
 
 
 def test_engine_gives_the_webui_only_a_handle(tmp_path, monkeypatch):
-    """Checks REQ-34: webui.start() gets an EngineHandle with exactly two
+    """Checks REQ-34: webui.start() gets an EngineHandle with exactly three
     functions, never the Engine, and the state it reads is a copy."""
     received = []
     fake = types.ModuleType("webui")
@@ -115,7 +115,7 @@ def test_engine_gives_the_webui_only_a_handle(tmp_path, monkeypatch):
 
     assert isinstance(handle, EngineHandle)
     assert not isinstance(handle, Engine)
-    assert [f.name for f in fields(handle)] == ["read_state", "send_command"]
+    assert [f.name for f in fields(handle)] == ["read_state", "send_command", "read_config"]
     state = handle.read_state()
     state["result"]["soc_pct"] = -1  # changing the copy must not reach the engine
     state["sources"].append("other")
@@ -255,6 +255,53 @@ def test_source_that_cannot_provide_current_returns_400(tmp_path, monkeypatch):
         assert "source 'listener'" in answer["error"]
         assert "available: simulated" in answer["error"]
         assert get_json(engine, "/api/state")["sources"] == ["simulated"]
+    finally:
+        stop_engine(engine)
+
+
+# --- Config tab ---------------------------------------------------------------
+
+
+def test_config_form_and_save_through_the_api(tmp_path):
+    """Checks REQ-16, REQ-34: GET /api/config gives the form built from
+    config.yaml; a Save posted as a command is applied by the engine at its
+    next pass, and its result shows up in /api/state under its id."""
+    path = write_config(tmp_path, {**WEBUI_ON, "start.autostart": False})
+    engine = start_engine(path)
+    try:
+        form = get_json(engine, "/api/config")
+        paths = [field["path"] for field in form["fields"]]
+        assert "pack.cells_per_module" in paths
+        assert [b["name"] for b in form["batteries"]] == ["test"]
+        assert form["restart_needed"] == ["webui.host", "webui.port"]
+
+        status, answer = post(
+            engine,
+            {
+                "command": "save_config",
+                "value": {"version": form["version"], "changes": {"start.soc": 30}},
+            },
+        )
+        assert status == 200
+        assert "soc: 50" in path.read_text()  # not yet: the engine applies it
+
+        step(engine)
+
+        actions = get_json(engine, "/api/state")["actions"]
+        assert [a["id"] for a in actions if a["ok"]] == [answer["id"]]
+        assert "soc: 30" in path.read_text()
+        assert get_json(engine, "/api/config")["version"] != form["version"]
+    finally:
+        stop_engine(engine)
+
+
+def test_live_commands_are_refused_while_stopped(tmp_path):
+    """Checks REQ-36: Set SOC and the other live controls need RUNNING."""
+    engine = start_engine(write_config(tmp_path, {**WEBUI_ON, "start.autostart": False}))
+    try:
+        status, answer = post(engine, {"command": "set_soc", "value": 50})
+        assert status == 400
+        assert "only while RUNNING" in answer["error"]
     finally:
         stop_engine(engine)
 

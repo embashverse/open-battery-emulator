@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 from conftest import MISSING, FakeClock, write_config
 
+from emulator.config import ConfigError
 from emulator.engine import (
     TICK_S,
-    ConfigError,
     elapsed_s,
     main,
     run,
@@ -291,15 +291,18 @@ def test_disabled_interface_is_not_loaded(tmp_path, monkeypatch):
     assert calls == []
 
 
-def test_engine_source_imports_no_interface_code():
-    """Checks REQ-14: engine.py never imports CAN or any interface directly."""
-    source = (Path(__file__).parent.parent / "emulator" / "engine.py").read_text()
+@pytest.mark.parametrize("file_name", ["engine.py", "config.py"])
+def test_engine_source_imports_no_interface_code(file_name):
+    """Checks REQ-14: engine.py and config.py never import CAN, any interface
+    or the web UI directly."""
+    source = (Path(__file__).parent.parent / "emulator" / file_name).read_text()
     import_lines = [
         line.strip()
         for line in source.splitlines()
         if line.strip().startswith(("import ", "from "))
     ]
     for line in import_lines:
+        assert "webui" not in line
         assert "interfaces" not in line
         assert "can" not in line.split()  # "import can" or "from can ..."
         assert "cantools" not in line
