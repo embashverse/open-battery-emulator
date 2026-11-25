@@ -345,6 +345,33 @@ def test_state_has_the_soc_of_every_cell(tmp_path):
         stop_engine(engine)
 
 
+def test_state_has_the_pack_capacity(tmp_path):
+    """Checks REQ-15: the state has the pack capacity in Ah (strings x the
+    capacity in cell.csv), for the time to empty or full on the page. None
+    before the first Play."""
+    path = write_config(
+        tmp_path,
+        {
+            **WEBUI_ON,
+            "pack": {
+                "cells_per_module": 2,
+                "modules_in_series": 1,
+                "strings_in_parallel": 2,
+            },
+            "start.autostart": False,
+        },
+    )
+    engine = start_engine(path)
+    try:
+        assert get_json(engine, "/api/state")["capacity_ah"] is None
+        assert post(engine, {"command": "play", "value": None})[0] == 200
+        step(engine)
+        state = get_json(engine, "/api/state")
+        assert state["capacity_ah"] == pytest.approx(2 * 100)  # test battery: 100 Ah
+    finally:
+        stop_engine(engine)
+
+
 # --- Config tab ---------------------------------------------------------------
 
 

@@ -18,8 +18,8 @@ const SOC_GREEN_ABOVE_PCT = 50; // SOC bar: green above this,
 const SOC_RED_BELOW_PCT = 20; // red below this, amber in between
 const CURRENT_STEP_A = 1; // what one press of - or + changes
 const SEND_PAUSE_MS = 300; // after the last - or + press, then the current is sent
-const CELL_MIN_PX = 10; // cell squares never get smaller; the grid scrolls instead
-const CELL_MAX_PX = 24;
+const CELL_MIN_PX = 12; // cell squares never get smaller; the grid scrolls instead
+const CELL_MAX_PX = 30;
 const CONFIRM_MS = 3000; // how long a confirmation stays before it fades
 
 // Explanations shown on hover or tap.
@@ -27,6 +27,8 @@ const TIPS = {
   FULL: "a cell reached its maximum voltage, charging is blocked",
   EMPTY: "a cell reached its minimum voltage, discharging is blocked",
 };
+// The pack state in normal case. FULL and EMPTY stay as they are.
+const STATE_NAMES = { IDLE: "Idle", CHARGING: "Charging", DISCHARGING: "Discharging" };
 const CAUSED = {
   FULL: "caused FULL: charging is blocked",
   EMPTY: "caused EMPTY: discharging is blocked",
@@ -207,36 +209,40 @@ function setUpTips() {
   window.addEventListener("scroll", hideTip, true);
 }
 
-// --- 5. Header: connection and the run button --------------------------------
+// --- 5. Connection and the run button --------------------------------
 
 let runState = null; // "RUNNING" or "STOPPED", from the latest state
 let connected = false;
 let busy = false; // a Play or Stop is on its way
 let shownError = null; // the failed Play error already shown, so it shows once
 
+// The dot beats while connected.
 function showConnection(ok) {
   connected = ok;
   const badge = document.getElementById("connection");
-  badge.textContent = ok ? "Connected" : "No connection";
+  setText("connection-text", ok ? "Connected" : "No connection");
   badge.classList.toggle("lost", !ok);
+  badge.classList.toggle("alive", ok);
   showRunButton();
 }
 
-// Left part: the state (green dot "Running" or grey dot "Stopped"). Right
-// part: what pressing does ("Play" or "Stop"), or "Starting…" / "Stopping…"
-// while the command is on its way.
+// The run button sits in the Live tab's right column. Left half: the state
+// (beating green dot "Running", grey dot "Stopped", or "Starting…" /
+// "Stopping…" while the command is on its way). Right half: what pressing
+// does ("Play" or "Stop").
 function showRunButton() {
   const running = runState === "RUNNING";
   const button = document.getElementById("run-button");
   button.classList.toggle("running", running);
+  button.querySelector(".run-state").classList.toggle("alive", running && !busy);
   button.querySelector(".symbol").className = "symbol " + (running ? "stop" : "play");
   button.disabled = busy || !connected || runState === null;
   button.setAttribute("aria-label", running ? "Running, press to stop" : "Stopped, press to play");
 
-  setText("run-label", running ? "Running" : "Stopped");
-  let verb = running ? "Stop" : "Play";
-  if (busy) verb = running ? "Stopping…" : "Starting…";
-  setText("run-verb", verb);
+  let label = running ? "Running" : "Stopped";
+  if (busy) label = running ? "Stopping…" : "Starting…";
+  setText("run-label", label);
+  setText("run-verb", running ? "Stop" : "Play");
 }
 
 function showHeader(state) {
@@ -253,9 +259,8 @@ function showHeader(state) {
   // while RUNNING.
   const running = state.run_state === "RUNNING";
   document.getElementById("config-fields").disabled = running;
-  document.getElementById("save").disabled = running || saving;
-  document.getElementById("config-lock").hidden = !running;
   document.getElementById("live-controls").disabled = !running;
+  showSaveState();
 }
 
 async function playOrStop() {
@@ -295,22 +300,52 @@ function setUpTabs() {
 
 // --- 7. Live values ----------------------------------------------------------
 
+// For example "M11·C7".
 function where(position) {
-  return "M" + position.module + " C" + position.cell;
+  return "M" + position.module + "\u00b7C" + position.cell;
+}
+
+// For example 4534 s -> "1:15:34".
+function clock(seconds) {
+  const whole = Math.floor(seconds);
+  const h = Math.floor(whole / 3600);
+  const m = Math.floor(whole / 60) % 60;
+  const s = whole % 60;
+  return h + ":" + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+// For example 2.57 h -> "2 h 34 min", 0.2 h -> "12 min".
+function duration(hours) {
+  const minutes = Math.round(hours * 60);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? h + " h " + m + " min" : m + " min";
+}
+
+// Time until empty (discharging) or full (charging), from the charge left
+// and the current that really flows now. Empty at 0 A or when stopped.
+function timeLeft(state, result) {
+  const current = result.current_a;
+  if (state.run_state !== "RUNNING" || current === 0 || !state.capacity_ah) return "";
+  if (current > 0) {
+    return "about " + duration((result.soc_pct / 100) * state.capacity_ah / current) + " to empty";
+  }
+  return "about " + duration(((100 - result.soc_pct) / 100) * state.capacity_ah / -current) + " to full";
 }
 
 function showValues(state) {
   const result = state.result;
-  document.getElementById("tab-live").classList.toggle("stopped", state.run_state !== "RUNNING");
-  setText("elapsed", state.elapsed_s.toFixed(1) + " s");
-  setText("current-source", "from " + state.current_source);
+  const running = state.run_state === "RUNNING";
+  document.getElementById("tab-live").classList.toggle("stopped", !running);
+  setText("elapsed", clock(state.elapsed_s));
 
   const stateBox = document.getElementById("state");
   if (result === null) {
-    setText("state", state.run_state === "RUNNING" ? "starting" : "–");
+    setText("state", running ? "Starting" : "–");
     return; // no tick has run yet
   }
-  setText("state", result.state);
+  setText("state", STATE_NAMES[result.state] || result.state);
+  stateBox.classList.toggle("charging", result.state === "CHARGING");
   const special = TIPS[result.state];
   stateBox.classList.toggle("attention", Boolean(special));
   if (special) {
@@ -321,29 +356,32 @@ function showValues(state) {
 
   const soc = result.soc_pct;
   setText("soc", soc.toFixed(2) + " %");
-  const bar = document.getElementById("soc-bar");
-  bar.style.width = Math.max(0, Math.min(100, soc)) + "%";
-  bar.classList.toggle("red", soc < SOC_RED_BELOW_PCT);
-  bar.classList.toggle("amber", soc >= SOC_RED_BELOW_PCT && soc <= SOC_GREEN_ABOVE_PCT);
+  setText("eta", timeLeft(state, result));
+  const fill = document.getElementById("soc-bar");
+  fill.style.width = Math.max(0, Math.min(100, soc)) + "%";
+  fill.classList.toggle("red", soc < SOC_RED_BELOW_PCT);
+  fill.classList.toggle("amber", soc >= SOC_RED_BELOW_PCT && soc <= SOC_GREEN_ABOVE_PCT);
+  // The light in the bar moves the way the charge goes.
+  const bar = document.getElementById("bar");
+  bar.classList.toggle("charging", running && result.current_a < 0);
+  bar.classList.toggle("discharging", running && result.current_a > 0);
 
   setText("voltage", result.voltage_v.toFixed(2) + " V");
   setText("current", result.current_a.toFixed(1) + " A");
 
-  // For example "3.283 – 3.311 V  Δ 28 mV".
   const low = result.lowest_cell;
   const high = result.highest_cell;
-  const spreadMv = (high.voltage_v - low.voltage_v) * 1000;
-  setText(
-    "cells-line",
-    "Cells " + low.voltage_v.toFixed(3) + " – " + high.voltage_v.toFixed(3) +
-      " V   Δ " + spreadMv.toFixed(0) + " mV"
-  );
-  setText("cells-where", "lowest " + where(low) + " · highest " + where(high));
-  setText(
-    "limits-line",
-    "Charge limit " + result.max_charge_a.toFixed(1) + " A · discharge limit " +
-      result.max_discharge_a.toFixed(1) + " A"
-  );
+  setText("low-v", low.voltage_v.toFixed(3) + " V");
+  setText("low-where", where(low));
+  setText("high-v", high.voltage_v.toFixed(3) + " V");
+  setText("high-where", where(high));
+  setText("spread", ((high.voltage_v - low.voltage_v) * 1000).toFixed(0) + " mV");
+  document.getElementById("low-v").parentElement.dataset.tip =
+    "Lowest cell: module " + low.module + ", cell " + low.cell;
+  document.getElementById("high-v").parentElement.dataset.tip =
+    "Highest cell: module " + high.module + ", cell " + high.cell;
+  setText("charge-limit", result.max_charge_a.toFixed(0) + " A");
+  setText("discharge-limit", result.max_discharge_a.toFixed(0) + " A");
 
   const timeout = document.getElementById("pill-timeout");
   timeout.hidden = !result.current_timeout;
@@ -353,74 +391,61 @@ function showValues(state) {
 }
 
 // --- 8. Cell grid ------------------------------------------------------------
-// One row per module, one small square per cell, grouped by string with a
-// label above each string. Calm green by default: amber for a cell more than
-// CELL_DEVIATION_WARN_V from the pack average, red for a cell at or beyond
-// its minimum or maximum voltage, and for the cell that caused FULL or EMPTY.
-// The lowest and highest cell get an outline. Built once, updated each poll.
+// Strings side by side, each a block with its label above and one row per
+// module, one small square per cell. Calm green by default: amber for a cell
+// more than CELL_DEVIATION_WARN_V from the pack average, red for a cell at or
+// beyond its minimum or maximum voltage, and for the cell that caused FULL or
+// EMPTY. The lowest and highest cell get an outline. Built once, updated each
+// poll.
 
 let gridShape = ""; // "strings x modules x cells" of the squares on the page
-let gridModules = 0;
-let gridStrings = 0;
-let gridColumns = 0;
 
 function buildGrid(modules, strings) {
   const grid = document.getElementById("grid");
   const cellsPerModule = modules[0].length;
   const modulesPerString = modules.length / strings;
   grid.innerHTML = "";
-  grid.style.gridTemplateColumns = "auto repeat(" + cellsPerModule + ", var(--cell-size))";
+  let block = null;
   modules.forEach(function (cells, m) {
     if (m % modulesPerString === 0) {
+      block = document.createElement("div");
+      block.className = "string";
+      block.style.gridTemplateColumns = "30px repeat(" + cellsPerModule + ", var(--size))";
       const label = document.createElement("span");
       label.className = "string-label";
       label.textContent = "String " + (m / modulesPerString + 1);
-      grid.appendChild(label);
+      block.appendChild(label);
+      grid.appendChild(block);
     }
     const label = document.createElement("span");
     label.className = "module-label";
     label.textContent = "M" + (m + 1);
-    grid.appendChild(label);
+    block.appendChild(label);
     cells.forEach(function (_, c) {
       const box = document.createElement("div");
       box.className = "cell";
       box.dataset.module = m + 1;
       box.dataset.cell = c + 1;
-      grid.appendChild(box);
+      block.appendChild(box);
     });
   });
   gridShape = strings + "x" + modules.length + "x" + cellsPerModule;
-  gridModules = modules.length;
-  gridStrings = strings;
-  gridColumns = cellsPerModule;
   sizeCells();
 }
 
-// The squares share the space the card has left, between CELL_MIN_PX and
-// CELL_MAX_PX. A pack too large for that scrolls inside the card.
+// Picks the largest square size, from CELL_MAX_PX down to CELL_MIN_PX, at
+// which every string fits the card (strings wrap to a new row when they do
+// not fit side by side). Gaps grow a little with the squares. A pack too
+// large even at CELL_MIN_PX scrolls inside the card.
 function sizeCells() {
-  if (gridModules === 0) return;
-  const area = document.querySelector(".grid-scroll");
-  if (area.clientHeight === 0) return; // tab hidden
-  const gap = 3;
-  const padding = 4;
-  const labelWidth = 34; // the "M16" column
-  const rows = gridModules + gridStrings; // module rows and string label rows
-  // The "String n" rows, measured on the page (height plus the gap above).
-  let labels = 0;
-  document.querySelectorAll("#grid .string-label").forEach(function (label) {
-    labels += label.offsetHeight + parseFloat(getComputedStyle(label).marginTop);
-  });
-  const byHeight = (area.clientHeight - padding - labels - gap * (rows - 1)) / gridModules;
-  const byWidth = (area.clientWidth - padding - labelWidth - gap * gridColumns) / gridColumns;
-  let size = Math.max(CELL_MIN_PX, Math.min(CELL_MAX_PX, Math.floor(Math.min(byHeight, byWidth))));
+  const area = document.querySelector(".grid-area");
   const grid = document.getElementById("grid");
-  grid.style.setProperty("--cell-size", size + "px");
-  // Labels can make rows a pixel taller than the estimate: shrink until it
-  // really fits (below CELL_MIN_PX the card scrolls instead).
-  while (size > CELL_MIN_PX && area.scrollHeight > area.clientHeight) {
-    size -= 1;
-    grid.style.setProperty("--cell-size", size + "px");
+  if (gridShape === "" || area.clientHeight === 0) return; // no pack yet, or tab hidden
+  for (let size = CELL_MAX_PX; size >= CELL_MIN_PX; size -= 1) {
+    grid.style.setProperty("--size", size + "px");
+    grid.style.setProperty("--gap", Math.max(2, Math.round(size * 0.18)) + "px");
+    const fits = area.scrollHeight <= area.clientHeight && area.scrollWidth <= area.clientWidth;
+    if (fits) return;
   }
 }
 
@@ -475,9 +500,10 @@ function showGrid(state) {
 // The controls show the engine's live settings, but are never overwritten
 // while you are using them.
 
-let firstState = true;
 let socTouched = false; // the slider was moved and not applied yet
-let sendTimer = null; // waits SEND_PAUSE_MS after the last - or + press
+let sendTimer = null; // waits SEND_PAUSE_MS after the last change of the current
+let direction = "discharge"; // simulated current: "discharge" or "charge"
+let shownSimulatedA = null; // the engine's simulated current last put in the controls
 
 // Fills a select with names (used by the Config tab).
 function fillSelect(select, names, value) {
@@ -525,24 +551,42 @@ function showSources(state) {
   });
 }
 
+function showDirection() {
+  document.querySelectorAll("#direction .segment").forEach(function (button) {
+    button.classList.toggle("selected", button.dataset.direction === direction);
+  });
+}
+
+// Simulated current: the sign of the engine's value sets the direction, its
+// size the amps (0 keeps the chosen direction). Updated only when the engine's
+// value changes (first state, a Play, another browser) and nothing is waiting
+// to be sent from here.
+function showSimulatedCurrent(state) {
+  document.getElementById("sim-current").disabled = state.current_source !== "simulated";
+  if (state.simulated_a === shownSimulatedA || sendTimer !== null) return;
+  const input = document.getElementById("current-input");
+  if (document.activeElement === input) return;
+  shownSimulatedA = state.simulated_a;
+  if (state.simulated_a > 0) direction = "discharge";
+  if (state.simulated_a < 0) direction = "charge";
+  input.value = Math.abs(state.simulated_a);
+  showDirection();
+}
+
 function showControls(state) {
   showSources(state);
+  showSimulatedCurrent(state);
 
   const hold = document.getElementById("hold");
   if (document.activeElement !== hold) {
     hold.checked = state.hold_soc;
   }
 
-  const currentInput = document.getElementById("current-input");
-  if (firstState) {
-    currentInput.value = state.simulated_a;
-  }
   const slider = document.getElementById("soc-input");
   if (!socTouched && state.result !== null) {
     slider.value = Math.round(state.result.soc_pct);
     showSliderValue();
   }
-  firstState = false;
 }
 
 function showSliderValue() {
@@ -555,17 +599,31 @@ async function sendLive(command, value) {
   return result;
 }
 
+// Positive for discharge, negative for charge. An empty or unreadable field
+// is sent as it is, so the engine explains it.
 function sendCurrent() {
+  sendTimer = null;
+  const amps = readNumber(document.getElementById("current-input"));
+  if (typeof amps !== "number") {
+    sendLive("set_simulated_current", amps);
+    return;
+  }
+  const value = direction === "charge" ? -Math.abs(amps) : Math.abs(amps);
+  shownSimulatedA = value; // already shown, do not refill from the next state
+  sendLive("set_simulated_current", value);
+}
+
+// Every change waits SEND_PAUSE_MS, then the current is sent once.
+function currentChanged() {
   clearTimeout(sendTimer);
-  sendLive("set_simulated_current", readNumber(document.getElementById("current-input")));
+  sendTimer = setTimeout(sendCurrent, SEND_PAUSE_MS);
 }
 
 function stepCurrent(change) {
   const input = document.getElementById("current-input");
   const now = Number(input.value) || 0;
-  input.value = Math.round((now + change) * 1000) / 1000; // no 0.30000000000000004
-  clearTimeout(sendTimer);
-  sendTimer = setTimeout(sendCurrent, SEND_PAUSE_MS);
+  input.value = Math.max(0, Math.round((now + change) * 1000) / 1000); // no 0.30000000000000004
+  currentChanged();
 }
 
 function setUpControls() {
@@ -575,10 +633,14 @@ function setUpControls() {
     sendLive("set_source", button.dataset.name);
   });
 
-  document.getElementById("current-form").addEventListener("submit", function (event) {
-    event.preventDefault();
-    sendCurrent();
+  document.getElementById("direction").addEventListener("click", function (event) {
+    const button = event.target.closest(".segment");
+    if (!button || button.dataset.direction === direction) return;
+    direction = button.dataset.direction;
+    showDirection();
+    currentChanged();
   });
+  document.getElementById("current-input").addEventListener("input", currentChanged);
   document.getElementById("current-minus").addEventListener("click", function () {
     stepCurrent(-CURRENT_STEP_A);
   });
@@ -602,9 +664,10 @@ function setUpControls() {
   });
 
   document.getElementById("run-button").addEventListener("click", playOrStop);
-  // Messages coming and going change the space the grid has.
-  new ResizeObserver(sizeCells).observe(document.querySelector(".grid-scroll"));
+  // Messages coming and going, or a resized window, change the grid's space.
+  new ResizeObserver(sizeCells).observe(document.querySelector(".grid-area"));
   setText("warn-mv", (CELL_DEVIATION_WARN_V * 1000).toFixed(0));
+  showDirection();
 }
 
 // An empty or unreadable field is sent as text, so the engine explains it.
@@ -671,6 +734,7 @@ function buildForm(config) {
 
   fillSourceChoices();
   showPackSummary();
+  showSaveState();
 }
 
 // One labelled input: label on the left, input on the right. The input keeps
@@ -714,6 +778,7 @@ function makeInput(field, label, config) {
   input.classList.add("setting");
   input.addEventListener("input", function () {
     wrapper.classList.toggle("changed", isChanged(input));
+    showSaveState();
     if (field.path.startsWith("pack.") || field.path === "battery") showPackSummary();
     if (field.path.startsWith("interfaces.") && field.path.endsWith(".enabled")) fillSourceChoices();
   });
@@ -809,30 +874,49 @@ let saving = false; // a Save is on its way
 let reloadNotice = null; // the "config.yaml changed" message, while shown
 let reloadNoticeVersion = null; // the file version it was shown for
 
-async function saveConfig(event) {
-  event.preventDefault();
+// The settings changed in the form and not saved yet: {path: value}.
+function unsavedChanges() {
   const changes = {};
   document.querySelectorAll(".setting").forEach(function (input) {
     if (!input.disabled && isChanged(input)) {
       changes[input.field.path] = formValue(input);
     }
   });
+  return changes;
+}
+
+// The Save card: how many changes wait, or why it is locked. The button is
+// faded when there is nothing to save, while running and while saving.
+function showSaveState() {
+  const running = runState === "RUNNING";
+  const count = running ? 0 : Object.keys(unsavedChanges()).length;
+  const status = document.getElementById("save-status");
+  let text = "No unsaved changes";
+  if (running) text = "Press Stop to edit settings.";
+  else if (count === 1) text = "1 unsaved change";
+  else if (count > 1) text = count + " unsaved changes";
+  status.textContent = text;
+  status.classList.toggle("changed", count > 0);
+  document.getElementById("save").disabled = running || saving || count === 0;
+  setText("save-label", saving ? "Saving…" : "Save");
+}
+
+async function saveConfig(event) {
+  event.preventDefault();
+  const changes = unsavedChanges();
   if (Object.keys(changes).length === 0) {
     notify("Nothing changed.", "ok");
     return;
   }
 
-  const button = document.getElementById("save");
   saving = true;
-  button.disabled = true;
-  button.textContent = "Saving…";
+  showSaveState();
   const result = await sendCommand("save_config", {
     version: loadedConfig.version,
     changes: changes,
   });
   saving = false;
-  button.disabled = runState === "RUNNING";
-  button.textContent = "Save";
+  showSaveState();
   if (result.ok) {
     await loadConfig(); // the form now shows the saved file
     notify(result.message, "ok");

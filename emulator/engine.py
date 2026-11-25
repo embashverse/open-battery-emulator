@@ -54,6 +54,7 @@ from emulator.pack import (
     build_pack,
     cell_voltage_range,
     module_cell_socs,
+    pack_capacity_ah,
     pack_info,
     set_hold_soc,
     set_soc,
@@ -571,9 +572,11 @@ def make_live_state(engine: Engine, result: PackResult | None) -> dict:
     if engine.pack is None:
         cell_v_min, cell_v_max = None, None
         cell_socs = None
+        capacity_ah = None
     else:
         cell_v_min, cell_v_max = cell_voltage_range(engine.pack)
         cell_socs = module_cell_socs(engine.pack)
+        capacity_ah = pack_capacity_ah(engine.pack)
     return {
         "run_state": engine.run_state,
         "error": engine.error,
@@ -589,6 +592,7 @@ def make_live_state(engine: Engine, result: PackResult | None) -> dict:
         "cell_v_min": cell_v_min,
         "cell_v_max": cell_v_max,
         "module_cell_socs": cell_socs,  # same shape as result.module_cell_voltages
+        "capacity_ah": capacity_ah,  # for the time to empty or full on the page
     }
 
 

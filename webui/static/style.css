@@ -82,13 +82,23 @@ main {
 .small { font-size: 0.8rem; color: var(--muted); }
 .note { font-size: 0.8rem; color: var(--muted); }
 
-/* --- 3. Header, banners and tabs ------------------------------------------- */
+/* Heartbeat: two quick beats, then a rest, on a dot while something is alive. */
+@keyframes heartbeat {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  12%  { transform: scale(1.35); }
+  24%  { transform: scale(1); }
+  36%  { transform: scale(1.25); box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent); }
+  50%  { transform: scale(1);    box-shadow: 0 0 0 0 transparent; }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 transparent; }
+}
+.alive .dot { animation: heartbeat 1.6s ease-in-out infinite; }
+
+/* --- 3. Header, messages and tabs ------------------------------------------ */
 
 .top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
   gap: 12px;
   width: 100%;
   max-width: 1400px;
@@ -96,68 +106,23 @@ main {
   padding: 12px 16px 8px;
 }
 
-.title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-
-/* The capsule shape shared by the connection indicator and the run button. */
-.pill {
+/* Connection: outline only, slightly transparent; red when lost. */
+.connection {
   display: inline-flex;
   align-items: center;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--card);
-}
-
-.connection { font-size: 0.8rem; color: var(--muted); padding: 3px 12px; }
-.connection.lost { color: var(--red); border-color: var(--red); }
-
-/* One button in two parts that read as one unit: the state on the left, a
-   filled action on the right that says what pressing it does. */
-.run-button {
-  display: inline-flex;
-  align-items: stretch;
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--text);
-  font-size: 0.95rem;
+  gap: 7px;
+  font-size: 0.8rem;
   font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--green);
+  color: var(--green);
+  background: transparent;
+  opacity: 0.75;
   white-space: nowrap;
-  flex-shrink: 0;  /* on a narrow screen the header wraps, the button stays whole */
-  overflow: hidden;
-  transition: border-color 0.15s, transform 0.08s;
 }
-.run-state { display: flex; align-items: center; gap: 8px; padding: 9px 14px 9px 16px; }
-.run-button .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
-.run-button.running .dot { background: var(--green); }
-
-.run-action {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 18px 9px 14px;
-  color: #fff;
-  background: var(--green);  /* Play */
-  transition: filter 0.15s;
-}
-.run-button.running .run-action { background: var(--red); }  /* Stop */
-
-.run-button .symbol.stop { width: 10px; height: 10px; background: currentColor; border-radius: 2px; }
-.run-button .symbol.play {   /* a triangle pointing right, drawn with borders */
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 6px 0 6px 10px;
-  border-color: transparent transparent transparent currentColor;
-}
-
-.run-button:hover:not(:disabled) { border-color: var(--muted); }
-.run-button:hover:not(:disabled) .run-action { filter: brightness(0.9); }
-.run-button:active:not(:disabled) { transform: scale(0.97); }
-.run-button:active:not(:disabled) .run-action { filter: brightness(0.8); }
-.run-button:disabled { opacity: 1; }  /* the state stays readable */
-.run-button:disabled .run-action { opacity: 0.5; }
-.run-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.connection .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.connection.lost { border-color: var(--red); color: var(--red); }
 
 /* Messages: one slim banner per message, under the header, on both tabs. */
 .messages {
@@ -193,7 +158,7 @@ main {
   padding: 2px 8px;
 }
 
-/* A compact segmented switch: the tabs, and the current source. */
+/* A compact segmented switch: the tabs, the current source and the direction. */
 .tabs, .segmented {
   display: inline-flex;
   gap: 2px;
@@ -221,32 +186,73 @@ main {
 .segment.unavailable { opacity: 0.45; cursor: help; }
 
 /* --- 4. Live tab ----------------------------------------------------------- */
+/* Left: summary and cells. Right: controls, run time and the run button. */
 
 .live { display: flex; flex-direction: column; gap: 12px; }
 
-.summary-row { display: flex; flex-direction: column; gap: 12px; }
+/* The SOC card and the three small cards share one height. */
+.summary-row { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
 
-.soc-card { display: flex; flex-direction: column; gap: 4px; }
+.soc-card { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.soc-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .big-value {
   font-size: 2.6rem;
   font-weight: 600;
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
-.bar { height: 4px; border-radius: 2px; background: var(--line); margin: 4px 0 8px; }
-.bar-fill { height: 100%; width: 0; border-radius: 2px; background: var(--green); }
+.eta { font-size: 0.8rem; color: var(--muted); }
+
+.bar {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  margin: 6px 0 8px;
+  overflow: hidden;
+}
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  border-radius: 3px;
+  background: var(--green);
+  overflow: hidden;
+}
 .bar-fill.amber { background: var(--amber); }
 .bar-fill.red { background: var(--red); }
-.line { font-variant-numeric: tabular-nums; }
+/* A soft moving light: to the right while charging, to the left while
+   discharging, none when idle or stopped. */
+.bar-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.55) 50%, transparent 100%);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+}
+.bar.charging .bar-fill::after { opacity: 1; animation: flow-right 1.8s linear infinite; }
+.bar.discharging .bar-fill::after { opacity: 1; animation: flow-left 1.8s linear infinite; }
+@keyframes flow-right { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+@keyframes flow-left { from { background-position: 140% 0; } to { background-position: -40% 0; } }
 
-.small-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.small-card { display: flex; flex-direction: column; padding: 10px 14px; }
-.value { font-size: 1.2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.value.attention { color: var(--red); cursor: help; }
+/* Under the SOC bar: symbols and numbers only, the meaning is in the tooltip. */
+.stats { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px 24px; margin-top: 2px; }
+.stat-group { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; }
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+.stat b { font-weight: 600; }
+.stat .where { font-size: 0.75rem; color: var(--muted); }
+.stat .ico { width: 12px; height: 12px; color: var(--muted); flex: none; }
+.stat .ico.txt { width: auto; height: auto; font-size: 0.85rem; font-weight: 600; line-height: 1; }
 
-.stopped .big-value, .stopped .value, .stopped .line { color: var(--muted); }  /* last values, frozen */
-
-.pills { display: flex; gap: 6px; min-height: 22px; margin-top: 4px; }
 .flag {
   font-size: 0.75rem;
   font-weight: 600;
@@ -259,76 +265,117 @@ main {
 .flag.amber { background: var(--amber); }
 .flag.red { background: var(--red); }
 
+/* Small cards: label on the left, value on the right. */
+.small-cards { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.small-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+}
+.value { font-size: 1.15rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.state-value { font-size: 1rem; }
+.state-value.charging { color: var(--green); }
+.value.attention { color: var(--red); cursor: help; }
+
+/* Stopped: the last values stay, in grey. */
+.stopped .big-value, .stopped .value, .stopped .stat b { color: var(--muted); }
+
 /* --- 5. Cell grid ---------------------------------------------------------- */
-/* Small green squares, grouped by string; amber and red only for cells that
-   need attention. */
+/* Strings side by side, each a block with its label and module rows. The
+   square size is set by app.js (--size, --gap) so everything fits the card. */
 
 .grid-card { display: flex; flex-direction: column; min-height: 0; }
-.grid-scroll { overflow: auto; min-height: 0; flex: 1; }
-
-.grid {
-  display: grid;
-  gap: 3px;
-  padding: 2px;  /* room for the outline of the lowest and highest cell */
-  justify-content: start;
-  /* columns and --cell-size are set by app.js */
+.grid-area {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;  /* only below the smallest square size */
+  display: flex;
 }
-
+.grid {
+  --size: 16px;
+  --gap: 3px;
+  margin: auto;  /* centred while it fits, still scrollable from the start when not */
+  padding: 2px;  /* room for the outline of the lowest and highest cell */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px 28px;  /* clear space between strings */
+}
+.string {
+  display: grid;
+  gap: var(--gap);
+  align-content: start;
+  /* columns are set by app.js: the M label, then one per cell */
+}
 .string-label {
   grid-column: 1 / -1;
   font-size: 0.7rem;
   font-weight: 600;
   color: var(--muted);
-  line-height: 1;
-  margin-top: 8px;  /* the gap between strings */
+  line-height: 1.2;
+  padding-left: 30px;
 }
-.string-label:first-child { margin-top: 0; }
-
 .module-label {
   font-size: 0.7rem;
   color: var(--muted);
-  padding-right: 6px;
   line-height: 1;
-  height: var(--cell-size, 16px);  /* rows are exactly as tall as the squares */
+  height: var(--size);  /* rows are exactly as tall as the squares */
   display: flex;
   align-items: center;
 }
-
 .cell {
-  width: var(--cell-size, 16px);
-  height: var(--cell-size, 16px);
-  border-radius: 3px;
+  width: var(--size);
+  height: var(--size);
+  border-radius: calc(var(--size) / 5);
   background: var(--cell);
   cursor: pointer;
 }
 .cell.amber { background: var(--amber); }
 .cell.red { background: var(--red); }
-.cell.extreme { outline: 1.5px solid var(--text); outline-offset: 0; }
+.cell.extreme { outline: 1.5px solid var(--text); }
 
-.legend { font-size: 0.75rem; color: var(--muted); margin-top: 10px; }
-.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-.legend .key:not(:first-child) { margin-left: 12px; }
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 20px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.key { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
 .key.ok { background: var(--cell); }
-.key.outline { background: var(--cell); outline: 1.5px solid var(--text); }
+.key.outline { border: 1.5px solid var(--muted); }
 .key.amber { background: var(--amber); }
 .key.red { background: var(--red); }
 
-/* --- 6. Live controls ------------------------------------------------------ */
+/* --- 6. Right column: controls, run time, run button ----------------------- */
 
-.controls-card { display: flex; flex-direction: column; gap: 4px; }
+.side { display: flex; flex-direction: column; gap: 12px; }
+
 .control { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .control-label { font-size: 0.85rem; }
 .row { display: flex; gap: 8px; align-items: center; }
-.segmented { flex-wrap: wrap; align-self: flex-start; }
+.control .segmented { align-self: flex-start; flex-wrap: wrap; }  /* track only as wide as its options */
+
+#direction .segment.selected { color: var(--text); }        /* Discharge: plain */
+#direction .segment.charge.selected { color: var(--green); } /* Charge: green */
+#sim-current { margin-bottom: 14px; }  /* a fieldset, so set again here */
+#sim-current:disabled { opacity: 0.45; }
+#sim-current:disabled .segment { cursor: default; }
 
 .stepper { display: flex; align-items: center; gap: 6px; }
-.stepper input { width: 100px; text-align: center; }
+.stepper input[type="number"] { width: 100px; text-align: center; }
+.stepper .unit { font-size: 0.85rem; color: var(--muted); margin-left: -2px; }
 .step { width: 34px; padding: 6px 0; font-size: 1rem; line-height: 1; }
 
 input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
 
 /* Toggle switch: a checkbox drawn as a track with a knob. */
-.switch-row { flex-direction: row; align-items: center; justify-content: space-between; }
+.switch-row { display: flex; align-items: center; justify-content: space-between; }
 .switch {
   appearance: none;
   -webkit-appearance: none;
@@ -355,41 +402,83 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
 .switch:checked { background: var(--accent); }
 .switch:checked::before { left: 18px; }
 .switch:disabled { opacity: 0.45; cursor: default; }
+.controls-card .note { margin-top: 12px; }
 
-/* --- 7. Config tab --------------------------------------------------------- */
+.time-card { padding: 10px 16px; }
+.time-card .value { font-size: 1.05rem; }
 
-.save-row {
+/* Run button: two equal halves that read as one unit. The left half is the
+   state, the right half a filled action that says what pressing it does. */
+.run-button {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: border-color 0.15s, transform 0.08s;
+}
+.run-state, .run-action {
+  flex: 1 1 0;  /* exactly half each */
   display: flex;
   align-items: center;
-  gap: 8px 16px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
+  justify-content: center;
+  gap: 9px;
+  padding: 13px 12px;
 }
-.save-row button { margin-left: auto; padding: 7px 28px; }
+.run-button .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); color: var(--muted); }
+.run-button.running .dot { background: var(--green); color: var(--green); }
+.run-action { color: #fff; background: var(--green); transition: filter 0.15s; }  /* Play */
+.run-button.running .run-action { background: var(--red); }  /* Stop */
 
-/* An even grid: cards in one row have the same height. Interfaces (and Other)
-   span the full width at the bottom, because they grow. */
+.symbol.stop { width: 11px; height: 11px; background: currentColor; border-radius: 2px; }
+.symbol.play {   /* a triangle pointing right, drawn with borders */
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 7px 0 7px 11px;
+  border-color: transparent transparent transparent currentColor;
+}
+
+.run-button:hover:not(:disabled) { border-color: var(--muted); }
+.run-button:hover:not(:disabled) .run-action { filter: brightness(0.9); }
+.run-button:active:not(:disabled) { transform: scale(0.98); }
+.run-button:active:not(:disabled) .run-action { filter: brightness(0.8); }
+.run-button:disabled { opacity: 1; }  /* the state stays readable */
+.run-button:disabled .run-action { opacity: 0.5; }
+.run-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* --- 7. Config tab --------------------------------------------------------- */
+/* An even grid: cards in one row have the same height. Interfaces spans two
+   columns at the bottom, the Save card sits next to it. */
+
 .config-cards {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
   align-items: stretch;
 }
+#config-fields { display: contents; }  /* its cards are items of the grid */
 .config-cards .card[hidden] { display: none; }
 .config-cards .card.wide { grid-column: 1 / -1; }
-.config-cards .note { margin-bottom: 6px; }
+.config-cards .note { margin-bottom: 4px; }
+.config-cards .card { padding: 11px 16px; }
+.config-cards h2 { margin-bottom: 6px; }
 
-.fields { display: flex; flex-direction: column; gap: 5px; }
-/* In a wide card the fields form their own columns, so it grows wide, not tall. */
+.fields { display: flex; flex-direction: column; gap: 3px; }
 .card.wide .fields {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 4px 20px;
+  gap: 3px 20px;
 }
-.config-cards .card { padding: 12px 16px; }
-.config-cards .fields { gap: 4px; }
+.card.wide .fields h3, .card.span2 .fields h3 { grid-column: 1 / -1; }
 .config-cards input[type="number"], .config-cards input[type="text"], .config-cards select { padding: 3px 8px; }
-.card.wide .fields h3 { grid-column: 1 / -1; }
 .field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 100px;
@@ -401,6 +490,58 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
 .field.changed > span { color: var(--accent); font-weight: 600; }
 
 .pack-summary { margin-top: 8px; font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Save card */
+.save-card { display: flex; flex-direction: column; justify-content: space-between; gap: 14px; }
+.save-card h2 { margin: 0; }
+.save-card .notes { display: flex; flex-direction: column; gap: 6px; }
+.save-card .note { margin: 0; }
+.reminder {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  font-size: 0.85rem;
+}
+.reminder .icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.save-status { font-size: 0.8rem; color: var(--muted); }
+.save-status.changed { color: var(--accent); font-weight: 600; }
+.save-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  padding: 11px 24px;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: transform 0.08s, filter 0.15s;
+}
+.save-button .tick {   /* a checkmark drawn with two borders */
+  width: 12px;
+  height: 7px;
+  border-left: 2.5px solid currentColor;
+  border-bottom: 2.5px solid currentColor;
+  transform: rotate(-45deg) translate(1px, -2px);
+}
+.save-button:hover:not(:disabled) { filter: brightness(0.9); }
+.save-button:active:not(:disabled) { transform: scale(0.98); }
 
 /* --- 8. Inputs and buttons ------------------------------------------------- */
 
@@ -432,7 +573,6 @@ button {
 }
 button:disabled { opacity: 0.45; cursor: default; }
 
-
 /* --- 9. Tooltip (hover or tap), one element placed by app.js --------------- */
 
 .tip {
@@ -461,15 +601,25 @@ button:disabled { opacity: 0.45; cursor: default; }
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px;
     grid-template-rows: auto minmax(0, 1fr);
-    grid-template-areas: "summary controls" "grid controls";
+    grid-template-areas: "summary side" "grid side";
   }
-  .summary-row { grid-area: summary; flex-direction: row; }
-  .soc-card { flex: 1; min-width: 0; }
-  .small-cards { grid-template-columns: 1fr; width: 200px; gap: 8px; }
+  .summary-row { grid-area: summary; grid-template-columns: minmax(0, 1fr) 250px; }
+  .small-cards { grid-template-columns: 1fr; grid-template-rows: repeat(3, 1fr); }
   .grid-card { grid-area: grid; }
-  .controls-card { grid-area: controls; align-self: start; }
+  .side { grid-area: side; align-self: start; }
 
-  .config-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .config-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .config-cards .card.span2 { grid-column: 1 / span 2; }
+  .card.span2 .fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px 20px;
+  }
 
   #tab-config { overflow: auto; }  /* only if a config.yaml is very long */
+}
+
+/* No moving parts for people who asked their system for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .alive .dot, .bar .bar-fill::after { animation: none; }
 }

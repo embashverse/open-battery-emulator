@@ -124,20 +124,21 @@ bad setting in `config.yaml` stops it at start with a message naming the setting
 
 ### Web UI
 
-An optional page in the browser with two tabs. At the top, one run button shows whether
-the emulator is running and says what pressing it does (Play or Stop). Errors and
-confirmations appear in one banner under it. It needs no internet: everything comes from
-the emulator itself.
+An optional page in the browser with two tabs. Errors and confirmations appear in one
+banner under the header. It needs no internet: everything comes from the emulator itself.
 
-- **Live:** SOC, voltage, current, state, the cell voltage range and spread, limits,
-  flags (hover or tap one for an explanation), a grid of every cell grouped by string
-  (green = normal, amber = far from the pack average, red = at its minimum or maximum
-  voltage or the cell that caused FULL or EMPTY; hover or tap for its voltage and SOC),
-  and controls for the current source, the simulated current, Set SOC and Hold SOC.
+- **Live:** SOC with the time to empty or full, voltage, current, state, the lowest and
+  highest cell, the spread, limits and flags (hover or tap a symbol or flag for an
+  explanation), and a grid of every cell with the strings side by side (green = normal,
+  amber = far from the pack average, red = at its minimum or maximum voltage or the cell
+  that caused FULL or EMPTY; hover or tap for its voltage and SOC). On the right: controls
+  for the current source, the simulated current (Discharge or Charge and the amps), Set
+  SOC and Hold SOC, the run time, and one run button that shows whether the emulator is
+  running and says what pressing it does (Play or Stop).
 - **Config:** every setting in `config.yaml`, grouped: battery (a list of the folders in
   `batteries/`), pack (with a summary like `96s2p · 316 V nominal · 200 Ah`), start,
   cell variation, current, interfaces and web UI. Every section under `interfaces:`
-  shows up here on its own.
+  shows up here on its own. The Save card shows how many changes are not saved yet.
 
 Turn it on in `config.yaml` and start (or restart) the emulator:
 

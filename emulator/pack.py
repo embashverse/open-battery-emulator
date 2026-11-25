@@ -419,6 +419,12 @@ def module_cell_socs(pack: Pack) -> list[list[float]]:
     ]
 
 
+def pack_capacity_ah(pack: Pack) -> float:
+    """Nominal pack capacity: strings in parallel x the capacity in cell.csv.
+    The same number the pack summary in the web UI shows."""
+    return len(pack.strings) * pack.battery.capacity_ah
+
+
 def average_soc(pack: Pack) -> float:
     cells = cells_of_pack(pack)
     return sum(c.soc_pct for c in cells) / len(cells)
