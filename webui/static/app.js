@@ -439,20 +439,36 @@ function buildGrid(modules, strings) {
   sizeCells();
 }
 
-// Picks the largest square size, from CELL_MAX_PX down to CELL_MIN_PX, at
-// which every string fits the card (strings wrap to a new row when they do
-// not fit side by side). Gaps grow a little with the squares. A pack too
-// large even at CELL_MIN_PX scrolls inside the card.
+// Picks the square size. The card's width decides it, up to CELL_MAX_PX
+// (strings wrap to a new row of blocks when they do not fit side by side);
+// the card is then only as tall as its rows. Only when that grid would be
+// taller than the room left on screen do the squares shrink, down to
+// CELL_MIN_PX; below that the grid scrolls inside its card. Gaps grow a
+// little with the squares.
 function sizeCells() {
   const area = document.querySelector(".grid-area");
   const grid = document.getElementById("grid");
-  if (gridShape === "" || area.clientHeight === 0) return; // no pack yet, or tab hidden
+  if (gridShape === "" || area.clientWidth === 0) return; // no pack yet, or tab hidden
+  const room = gridRoom(area);
   for (let size = CELL_MAX_PX; size >= CELL_MIN_PX; size -= 1) {
     grid.style.setProperty("--size", size + "px");
     grid.style.setProperty("--gap", Math.max(2, Math.round(size * 0.18)) + "px");
-    const fits = area.scrollHeight <= area.clientHeight && area.scrollWidth <= area.clientWidth;
+    const fits = area.scrollWidth <= area.clientWidth && grid.offsetHeight <= room;
     if (fits) return;
   }
+}
+
+// The most height the grid may take: the left column minus the summary row,
+// the gap and the rest of the card (padding, heading, legend). On a phone the
+// page scrolls, so there is no limit (the same 900 px as in style.css).
+function gridRoom(area) {
+  if (!window.matchMedia("(min-width: 900px)").matches) return Infinity;
+  const column = document.querySelector(".live-main");
+  const card = document.querySelector(".grid-card");
+  const summary = document.querySelector(".summary-row");
+  const gap = parseFloat(getComputedStyle(column).rowGap) || 0;
+  const cardRest = card.offsetHeight - area.offsetHeight;
+  return column.clientHeight - summary.offsetHeight - gap - cardRest;
 }
 
 function showGrid(state) {
@@ -671,7 +687,8 @@ function setUpControls() {
 
   document.getElementById("run-button").addEventListener("click", playOrStop);
   // A resized window, or the Live tab shown again, changes the grid's space.
-  new ResizeObserver(sizeCells).observe(document.querySelector(".grid-area"));
+  // The left column is watched, not the card: the card's size follows the grid.
+  new ResizeObserver(sizeCells).observe(document.querySelector(".live-main"));
   setText("warn-mv", (CELL_DEVIATION_WARN_V * 1000).toFixed(0));
   showDirection();
 }

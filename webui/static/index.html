@@ -22,67 +22,70 @@
   <main>
     <!-- 3. Live tab: summary and cells on the left, controls and run button on the right -->
     <div id="tab-live" class="tab-page live" hidden>
-      <section class="summary-row">
-        <div class="card soc-card">
-          <span class="label">SOC</span>
-          <div class="soc-top">
-            <span id="soc" class="big-value">–</span>
-            <span id="eta" class="eta"></span>
-          </div>
-          <div id="bar" class="bar"><div id="soc-bar" class="bar-fill"></div></div>
-          <!-- Symbols and numbers only; each explains itself on hover or tap -->
-          <div class="stats">
-            <div class="stat-group">
-              <span class="stat" data-tip="Lowest cell">
-                <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 3h8L6 9z" fill="currentColor"/></svg>
-                <b id="low-v">–</b><span id="low-where" class="where"></span></span>
-              <span class="stat" data-tip="Highest cell">
-                <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 9h8L6 3z" fill="currentColor"/></svg>
-                <b id="high-v">–</b><span id="high-where" class="where"></span></span>
-              <span class="stat" data-tip="Spread between the highest and lowest cell">
-                <span class="ico txt">Δ</span><b id="spread">–</b></span>
+      <!-- Left column: the summary, and the cell card as tall as its grid -->
+      <div class="live-main">
+        <section class="summary-row">
+          <div class="card soc-card">
+            <span class="label">SOC</span>
+            <div class="soc-top">
+              <span id="soc" class="big-value">–</span>
+              <span id="eta" class="eta"></span>
             </div>
-            <div class="stat-group">
-              <span class="stat" data-tip="Charge limit: the most current the pack accepts while charging">
-                <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 1.5h8M6 10.5V4M3.5 6.5L6 4l2.5 2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <b id="charge-limit">–</b></span>
-              <span class="stat" data-tip="Discharge limit: the most current the pack delivers while discharging">
-                <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 10.5h8M6 1.5V8M3.5 5.5L6 8l2.5-2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <b id="discharge-limit">–</b></span>
-              <span id="pill-timeout" class="flag amber" hidden>Timeout</span>
-              <span id="pill-temp" class="flag red" hidden
-                data-tip="temperature outside the battery's operating range, charge and discharge limits are 0">Temperature</span>
+            <div id="bar" class="bar"><div id="soc-bar" class="bar-fill"></div></div>
+            <!-- Symbols and numbers only; each explains itself on hover or tap -->
+            <div class="stats">
+              <div class="stat-group">
+                <span class="stat" data-tip="Lowest cell">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 3h8L6 9z" fill="currentColor"/></svg>
+                  <b id="low-v">–</b><span id="low-where" class="where"></span></span>
+                <span class="stat" data-tip="Highest cell">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 9h8L6 3z" fill="currentColor"/></svg>
+                  <b id="high-v">–</b><span id="high-where" class="where"></span></span>
+                <span class="stat" data-tip="Spread between the highest and lowest cell">
+                  <span class="ico txt">Δ</span><b id="spread">–</b></span>
+              </div>
+              <div class="stat-group">
+                <span class="stat" data-tip="Charge limit: the most current the pack accepts while charging">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 1.5h8M6 10.5V4M3.5 6.5L6 4l2.5 2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <b id="charge-limit">–</b></span>
+                <span class="stat" data-tip="Discharge limit: the most current the pack delivers while discharging">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 10.5h8M6 1.5V8M3.5 5.5L6 8l2.5-2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <b id="discharge-limit">–</b></span>
+                <span id="pill-timeout" class="flag amber" hidden>Timeout</span>
+                <span id="pill-temp" class="flag red" hidden
+                  data-tip="temperature outside the battery's operating range, charge and discharge limits are 0">Temperature</span>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="small-cards">
-          <div class="card small-card">
-            <span class="label">Voltage</span>
-            <span id="voltage" class="value">–</span>
+          <div class="small-cards">
+            <div class="card small-card">
+              <span class="label">Voltage</span>
+              <span id="voltage" class="value">–</span>
+            </div>
+            <div class="card small-card">
+              <span class="label">Current</span>
+              <span id="current" class="value">–</span>
+            </div>
+            <div class="card small-card">
+              <span class="label">State</span>
+              <span id="state" class="value state-value">–</span>
+            </div>
           </div>
-          <div class="card small-card">
-            <span class="label">Current</span>
-            <span id="current" class="value">–</span>
-          </div>
-          <div class="card small-card">
-            <span class="label">State</span>
-            <span id="state" class="value state-value">–</span>
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="card grid-card">
-        <h2>Cells</h2>
-        <div class="grid-area">
-          <div id="grid" class="grid"></div>
-        </div>
-        <p class="legend">
-          <span class="item"><span class="key ok"></span>Normal</span>
-          <span class="item"><span class="key outline"></span>Lowest / highest</span>
-          <span class="item"><span class="key amber"></span><span>Off by more than <span id="warn-mv">50</span> mV</span></span>
-          <span class="item"><span class="key red"></span>At limit</span>
-        </p>
-      </section>
+        <section class="card grid-card">
+          <h2>Cells</h2>
+          <div class="grid-area">
+            <div id="grid" class="grid"></div>
+          </div>
+          <p class="legend">
+            <span class="item"><span class="key ok"></span>Normal</span>
+            <span class="item"><span class="key outline"></span>Lowest / highest</span>
+            <span class="item"><span class="key amber"></span><span>Off by more than <span id="warn-mv">50</span> mV</span></span>
+            <span class="item"><span class="key red"></span>At limit</span>
+          </p>
+        </section>
+      </div>
 
       <div class="side">
         <section class="card controls-card">
@@ -185,28 +188,21 @@
           </section>
         </fieldset>
 
-        <!-- The Save card keeps its own height, so the button never moves;
-             messages go in their own area under it. -->
-        <div class="save-column">
-          <section class="card save-card">
-            <div class="notes">
-              <h2>Save</h2>
-              <div class="reminder">
-                <span class="icon" aria-hidden="true">!</span>
-                <span>Changes are only used after you press <b>Save</b>. Save first, then Play.</span>
-              </div>
-              <p class="note">Writes config.yaml and keeps its comments.</p>
-            </div>
-            <div class="notes">
-              <p id="save-status" class="save-status">&nbsp;</p>
-              <button id="save" class="save-button" type="submit"><span class="tick" aria-hidden="true"></span><span id="save-label">Save</span></button>
-            </div>
-          </section>
-          <!-- Messages of the Config tab -->
+        <!-- The Save card: messages go in a fixed slot above the status line,
+             so the Save button never moves. -->
+        <section class="card save-card">
+          <h2>Save</h2>
+          <div class="reminder">
+            <span class="icon" aria-hidden="true">!</span>
+            <span>Changes are only used after you press <b>Save</b>.</span>
+          </div>
+          <p class="note">Writes config.yaml and keeps its comments.</p>
           <div class="messages-slot">
             <div id="config-messages" class="messages" role="status" aria-live="polite"></div>
           </div>
-        </div>
+          <p id="save-status" class="save-status">&nbsp;</p>
+          <button id="save" class="save-button" type="submit"><span class="tick" aria-hidden="true"></span><span id="save-label">Save</span></button>
+        </section>
       </form>
     </div>
   </main>
