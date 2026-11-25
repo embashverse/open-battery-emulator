@@ -125,7 +125,7 @@ bad setting in `config.yaml` stops it at start with a message naming the setting
 ### Web UI
 
 An optional page in the browser with two tabs. Errors and confirmations appear next to
-the button that caused them: under the run button (Live) or under Save (Config). It needs
+the button that caused them: under the run button (Live) or under the Save card (Config). It needs
 no internet: everything comes from the emulator itself.
 
 - **Live:** SOC with the time to empty or full, voltage, current, state, the lowest and
@@ -187,7 +187,7 @@ Interface settings (like the DBC file) are checked by the interface itself, so t
 errors show up at Play, not at Save.
 
 If `config.yaml` changes on disk while the page is open (for example you edited it over
-SSH), the page shows a notice with a **Reload** button under Save, and refuses to Save over the
+SSH), the page shows a notice with a **Reload** button under the Save card, and refuses to Save over the
 newer file.
 
 `webui.host` and `webui.port` are saved like everything else, but only take effect after

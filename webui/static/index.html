@@ -185,22 +185,28 @@
           </section>
         </fieldset>
 
-        <section class="card save-card">
-          <div class="notes">
-            <h2>Save</h2>
-            <div class="reminder">
-              <span class="icon" aria-hidden="true">!</span>
-              <span>Changes are only used after you press <b>Save</b>. Save first, then Play.</span>
+        <!-- The Save card keeps its own height, so the button never moves;
+             messages go in their own area under it. -->
+        <div class="save-column">
+          <section class="card save-card">
+            <div class="notes">
+              <h2>Save</h2>
+              <div class="reminder">
+                <span class="icon" aria-hidden="true">!</span>
+                <span>Changes are only used after you press <b>Save</b>. Save first, then Play.</span>
+              </div>
+              <p class="note">Writes config.yaml and keeps its comments.</p>
             </div>
-            <p class="note">Writes config.yaml and keeps its comments.</p>
-          </div>
-          <div class="notes">
-            <p id="save-status" class="save-status">&nbsp;</p>
-            <button id="save" class="save-button" type="submit"><span class="tick" aria-hidden="true"></span><span id="save-label">Save</span></button>
-            <!-- Messages of the Config tab -->
+            <div class="notes">
+              <p id="save-status" class="save-status">&nbsp;</p>
+              <button id="save" class="save-button" type="submit"><span class="tick" aria-hidden="true"></span><span id="save-label">Save</span></button>
+            </div>
+          </section>
+          <!-- Messages of the Config tab -->
+          <div class="messages-slot">
             <div id="config-messages" class="messages" role="status" aria-live="polite"></div>
           </div>
-        </section>
+        </div>
       </form>
     </div>
   </main>

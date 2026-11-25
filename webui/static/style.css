@@ -451,7 +451,7 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
 
 /* --- 7. Config tab --------------------------------------------------------- */
 /* An even grid: cards in one row have the same height. Interfaces spans two
-   columns at the bottom, the Save card sits next to it. */
+   columns at the bottom; next to it the Save card with its messages below. */
 
 .config-cards {
   display: grid;
@@ -486,8 +486,11 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
 
 .pack-summary { margin-top: 8px; font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* Save card */
-.save-card { display: flex; flex-direction: column; justify-content: space-between; gap: 14px; }
+/* Third column next to Interfaces: the Save card at its own natural height,
+   then the messages in the space left under it. */
+.save-column { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.messages-slot { flex: 1; position: relative; }
+.save-card { flex: none; display: flex; flex-direction: column; gap: 14px; }
 .save-card h2 { margin: 0; }
 .save-card .notes { display: flex; flex-direction: column; gap: 6px; }
 .save-card .note { margin: 0; }
@@ -610,6 +613,11 @@ button:disabled { opacity: 0.45; cursor: default; }
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 3px 20px;
   }
+
+  /* Out of the flow: messages never make the row taller, so nothing moves.
+     Only this area scrolls when they need more room. */
+  .messages-slot { min-height: 80px; }  /* room for about two messages */
+  #config-messages { position: absolute; inset: 0; overflow-y: auto; }
 
   #tab-config { overflow: auto; }  /* only if a config.yaml is very long */
 }

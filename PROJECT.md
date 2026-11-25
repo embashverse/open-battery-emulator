@@ -535,7 +535,8 @@ The web UI follows a few rules, so it stays calm and readable:
   indicator while connected and on the run button while running. Nothing moves when
   stopped or disconnected.
 - Messages appear next to the button that caused them, so the page never shifts: under
-  the run button on the Live tab, under Save on the Config tab. Errors in red until
+  the run button on the Live tab, under the Save card on the Config tab (the Save button
+  never moves; only the messages area scrolls when it is full). Errors in red until
   closed, confirmations short and fading out, at most the newest three at a time.
 - Two tabs, Live and Config, each fits on one laptop screen without scrolling. A pack too
   large for the screen scrolls inside the cell grid card. On a phone the page scrolls.
@@ -558,7 +559,8 @@ The web UI follows a few rules, so it stays calm and readable:
   this. A cell shows its module, cell number, voltage and SOC on hover or tap.
 - Config tab: the setting groups as cards in an even grid, cards in one row the same
   height. Interfaces spans two columns at the bottom; next to it a Save card with a
-  reminder to save before Play, the number of unsaved changes and the Save button.
+  reminder to save before Play, the number of unsaved changes and the Save button, and
+  the messages below it.
 - Flags and the FULL and EMPTY states explain themselves on hover or tap. A current source
   that cannot be chosen right now is shown greyed with the reason.
 
@@ -600,7 +602,7 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-15 | on the Pi, open `http://battery.local:8080` on a phone on the same network | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
 | REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, run button shows a grey dot and Stopped, Config fields editable. Play: frames again, run button shows a green dot and Running, fields locked | | |
 | REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged | | |
-| REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears under Save; Reload shows the new value | | |
+| REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears under the Save card; Reload shows the new value | | |
 
 ## Milestones
 
