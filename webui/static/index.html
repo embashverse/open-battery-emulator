@@ -14,9 +14,6 @@
     <span id="connection" class="connection"><span class="dot"></span><span id="connection-text">Connecting…</span></span>
   </header>
 
-  <!-- 2. Messages for both tabs: errors stay until closed, confirmations fade -->
-  <div id="messages" class="messages" role="status" aria-live="polite"></div>
-
   <nav class="tabs">
     <button type="button" class="tab" data-tab="live">Live</button>
     <button type="button" class="tab" data-tab="config">Config</button>
@@ -120,7 +117,7 @@
               </div>
             </form>
 
-            <label class="switch-row">
+            <label class="control switch-row">
               <span class="control-label">Hold SOC</span>
               <input id="hold" type="checkbox" class="switch">
             </label>
@@ -139,6 +136,9 @@
           <span class="run-state"><span class="dot"></span><span id="run-label">Stopped</span></span>
           <span class="run-action"><span class="symbol play"></span><span id="run-verb">Play</span></span>
         </button>
+
+        <!-- Messages of the Live tab: errors stay until closed, confirmations fade -->
+        <div id="live-messages" class="messages" role="status" aria-live="polite"></div>
       </div>
     </div>
 
@@ -197,6 +197,8 @@
           <div class="notes">
             <p id="save-status" class="save-status">&nbsp;</p>
             <button id="save" class="save-button" type="submit"><span class="tick" aria-hidden="true"></span><span id="save-label">Save</span></button>
+            <!-- Messages of the Config tab -->
+            <div id="config-messages" class="messages" role="status" aria-live="polite"></div>
           </div>
         </section>
       </form>

@@ -124,8 +124,9 @@ bad setting in `config.yaml` stops it at start with a message naming the setting
 
 ### Web UI
 
-An optional page in the browser with two tabs. Errors and confirmations appear in one
-banner under the header. It needs no internet: everything comes from the emulator itself.
+An optional page in the browser with two tabs. Errors and confirmations appear next to
+the button that caused them: under the run button (Live) or under Save (Config). It needs
+no internet: everything comes from the emulator itself.
 
 - **Live:** SOC with the time to empty or full, voltage, current, state, the lowest and
   highest cell, the spread, limits and flags (hover or tap a symbol or flag for an
@@ -167,7 +168,7 @@ in both, so the page always works.
 - **Stop** closes the interfaces. The last values stay on the Live tab.
 - **Play** reads the saved `config.yaml`, builds a fresh pack and opens the interfaces.
   Time and the live controls start over. If something is wrong (a bad setting, a missing
-  CAN channel...), it stays STOPPED and the page shows the error at the top.
+  CAN channel...), it stays STOPPED and the page shows the error under the run button.
 
 `start.autostart: true` (the default) presses Play at start, so the Pi service is on the
 bus straight after boot. With `autostart: false` it starts STOPPED and waits for Play.
@@ -186,7 +187,7 @@ Interface settings (like the DBC file) are checked by the interface itself, so t
 errors show up at Play, not at Save.
 
 If `config.yaml` changes on disk while the page is open (for example you edited it over
-SSH), the page shows a banner with a **Reload** button, and refuses to Save over the
+SSH), the page shows a notice with a **Reload** button under Save, and refuses to Save over the
 newer file.
 
 `webui.host` and `webui.port` are saved like everything else, but only take effect after

@@ -21,6 +21,7 @@ const SEND_PAUSE_MS = 300; // after the last - or + press, then the current is s
 const CELL_MIN_PX = 12; // cell squares never get smaller; the grid scrolls instead
 const CELL_MAX_PX = 30;
 const CONFIRM_MS = 3000; // how long a confirmation stays before it fades
+const MAX_MESSAGES = 3; // newest messages kept per area, older ones go
 
 // Explanations shown on hover or tap.
 const TIPS = {
@@ -90,15 +91,17 @@ function setText(id, text) {
 }
 
 // --- 3. Messages -------------------------------------------------------------
-// One place for every message, under the header, on both tabs. An error
-// stays until it is closed; a confirmation fades out after CONFIRM_MS. The
-// same error text is never shown twice at once.
+// Messages appear next to the button that caused them: under the run button
+// (area "live") or under Save (area "config"), so the page never shifts. An
+// error stays until it is closed; a confirmation fades out after CONFIRM_MS.
+// The same text is never shown twice at once, and only the newest
+// MAX_MESSAGES stay in each area.
 
-// Shows a message. kind is "error" or "ok". action, if given, is
-// {label, onClick} for a button in the message (like Reload). Returns the
-// message element, so it can be removed by code too.
-function notify(text, kind, action) {
-  const box = document.getElementById("messages");
+// Shows a message. kind is "error" or "ok", area "live" or "config".
+// action, if given, is {label, onClick} for a button in the message (like
+// Reload). Returns the message element, so it can be removed by code too.
+function notify(text, kind, area, action) {
+  const box = document.getElementById(area + "-messages");
   const already = Array.from(box.children).find(function (m) {
     return m.dataset.text === text;
   });
@@ -136,15 +139,18 @@ function notify(text, kind, action) {
     }, CONFIRM_MS);
   }
   box.appendChild(message);
+  while (box.children.length > MAX_MESSAGES) {
+    box.firstElementChild.remove(); // the oldest
+  }
   return message;
 }
 
 // The result of a command: a short confirmation, or the error.
-function notifyResult(result, okText) {
+function notifyResult(result, okText, area) {
   if (result.ok) {
-    notify(okText || result.message, "ok");
+    notify(okText || result.message, "ok", area);
   } else {
-    notify(result.message, "error");
+    notify(result.message, "error", area);
   }
 }
 
@@ -251,7 +257,7 @@ function showHeader(state) {
 
   // A failed Play is shown once; closed, it comes back only for a new error.
   if (state.error && state.run_state === "STOPPED" && state.error !== shownError) {
-    notify("Could not start: " + state.error, "error");
+    notify("Could not start: " + state.error, "error", "live");
   }
   shownError = state.error;
 
@@ -273,7 +279,7 @@ async function playOrStop() {
   // A failed Play also shows up as state.error; this shows it at once.
   if (!result.ok) {
     shownError = result.message;
-    notify("Could not start: " + result.message, "error");
+    notify("Could not start: " + result.message, "error", "live");
   }
 }
 
@@ -595,7 +601,7 @@ function showSliderValue() {
 
 async function sendLive(command, value) {
   const result = await sendCommand(command, value);
-  notifyResult(result, "Applied");
+  notifyResult(result, "Applied", "live");
   return result;
 }
 
@@ -664,7 +670,7 @@ function setUpControls() {
   });
 
   document.getElementById("run-button").addEventListener("click", playOrStop);
-  // Messages coming and going, or a resized window, change the grid's space.
+  // A resized window, or the Live tab shown again, changes the grid's space.
   new ResizeObserver(sizeCells).observe(document.querySelector(".grid-area"));
   setText("warn-mv", (CELL_DEVIATION_WARN_V * 1000).toFixed(0));
   showDirection();
@@ -690,7 +696,7 @@ async function loadConfig() {
   try {
     loadedConfig = await getJson("/api/config");
   } catch (error) {
-    notify("Cannot read config.yaml: " + error.message, "error");
+    notify("Cannot read config.yaml: " + error.message, "error", "config");
     return;
   }
   buildForm(loadedConfig);
@@ -905,7 +911,7 @@ async function saveConfig(event) {
   event.preventDefault();
   const changes = unsavedChanges();
   if (Object.keys(changes).length === 0) {
-    notify("Nothing changed.", "ok");
+    notify("Nothing changed.", "ok", "config");
     return;
   }
 
@@ -919,9 +925,9 @@ async function saveConfig(event) {
   showSaveState();
   if (result.ok) {
     await loadConfig(); // the form now shows the saved file
-    notify(result.message, "ok");
+    notify(result.message, "ok", "config");
   } else {
-    notify(result.message, "error");
+    notify(result.message, "error", "config");
     checkConfigFile(); // shows the reload notice if the file changed
   }
 }
@@ -941,7 +947,7 @@ async function checkConfigFile() {
   } else if (now.version !== reloadNoticeVersion) {
     // Once per new version of the file: closed, it stays closed until the
     // file changes again.
-    reloadNotice = notify("config.yaml changed since this page loaded it.", "ok", {
+    reloadNotice = notify("config.yaml changed since this page loaded it.", "ok", "config", {
       label: "Reload",
       onClick: loadConfig,
     });

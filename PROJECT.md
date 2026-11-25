@@ -480,7 +480,7 @@ Web UI
   (ruamel.yaml round trip). Applying the saved settings means pressing Play.
 - **REQ-17** The page remembers which version of `config.yaml` it loaded (a hash of the
   file). Save is refused if the file changed since, and the page offers to reload. While
-  open, the page notices a changed file and shows a reload banner, so it never shows
+  open, the page notices a changed file and shows a reload notice, so it never shows
   stale values.
 - **REQ-18** The web UI builds its choices from what exists: batteries from the folders in
   `batteries/`, interface sections and their settings shown generically from
@@ -529,13 +529,14 @@ The web UI follows a few rules, so it stays calm and readable:
 - Colour only where something needs attention: green dot while running, green for
   charging, red for EMPTY, FULL, the temperature flag, errors and a lost connection, amber
   for the timeout flag.
-- The header has the title on the left and the connection indicator on the right: an
-  outline pill, green while connected, red for no connection.
+- The header has a large, bold title on the left and the connection indicator on the
+  right: an outline pill, green while connected, red for no connection.
 - A small dot beats like a heart (two quick beats, then a pause) on the connection
   indicator while connected and on the run button while running. Nothing moves when
   stopped or disconnected.
-- All messages appear in one place, a slim banner under the header: errors in red until
-  closed, confirmations short and fading out.
+- Messages appear next to the button that caused them, so the page never shifts: under
+  the run button on the Live tab, under Save on the Config tab. Errors in red until
+  closed, confirmations short and fading out, at most the newest three at a time.
 - Two tabs, Live and Config, each fits on one laptop screen without scrolling. A pack too
   large for the screen scrolls inside the cell grid card. On a phone the page scrolls.
 - Live tab, left: a SOC card with the big SOC value and a small time to empty or full, a
@@ -543,9 +544,10 @@ The web UI follows a few rules, so it stays calm and readable:
   the way the charge goes, and one row of symbols and numbers (lowest and highest cell with
   their position, spread, charge and discharge limit), each explained on hover or tap.
   Voltage, current and state sit stacked next to it at the same height, one line each.
-- Live tab, right: the controls, the run time, and one run button in two equal halves
-  that read as one unit: the state on the left (dot and Running or Stopped), a filled
-  action on the right that says what pressing it does (green Play, red Stop).
+- Live tab, right: the controls (sections with room and a thin line between them), the
+  run time, and one run button in two equal halves that read as one unit: the state on
+  the left (dot and Running or Stopped), a filled action on the right that says what
+  pressing it does (green Play, red Stop).
 - Simulated current: a Discharge or Charge choice and a positive number of amps, sent
   after a short pause.
 - Cell grid: strings side by side, each a block with its label and one row of small
@@ -598,7 +600,7 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-15 | on the Pi, open `http://battery.local:8080` on a phone on the same network | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
 | REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, run button shows a grey dot and Stopped, Config fields editable. Play: frames again, run button shows a green dot and Running, fields locked | | |
 | REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged | | |
-| REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload banner appears; Reload shows the new value | | |
+| REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears under Save; Reload shows the new value | | |
 
 ## Milestones
 
