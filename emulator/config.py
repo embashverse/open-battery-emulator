@@ -360,7 +360,11 @@ def make_field(path: str, value) -> dict:
         return {"path": path, "value": float(value), "type": "float"}
     if isinstance(value, str):
         return {"path": path, "value": str(value), "type": "str"}
-    return {"path": path, "value": None if value is None else str(value), "type": "other"}
+    return {
+        "path": path,
+        "value": None if value is None else str(value),
+        "type": "other",
+    }
 
 
 # --- 6. Battery list ----------------------------------------------------------
@@ -410,7 +414,9 @@ def apply_changes(config_path: Path, version: str, changes: dict) -> dict:
             "new values, then make your changes again."
         )
     if not isinstance(changes, dict):
-        raise ConfigError('changes must be an object like {"pack.cells_per_module": 12}')
+        raise ConfigError(
+            'changes must be an object like {"pack.cells_per_module": 12}'
+        )
 
     document = parse_config_text(text, config_path)
     for path, value in changes.items():
@@ -446,7 +452,11 @@ def set_setting(document: dict, path: str, value) -> None:
     if same_value(old, value):
         return
     # A hex number stays hex, like 0x200 for a CAN ID.
-    if isinstance(old, HexInt) and isinstance(value, int) and not isinstance(value, bool):
+    if (
+        isinstance(old, HexInt)
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+    ):
         value = HexInt(value)
     target[key] = value
 

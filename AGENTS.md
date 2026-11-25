@@ -22,4 +22,4 @@ Rules for AI coding agents in this repo.
 - Work on a branch, never commit to `main`.
 - If you are on main, create a branch named after the task before changing anything, and say
   which branch you created.
-- Before saying a task is done, run `uv run pytest` and `uv run ruff check .`
+- Before saying a task is done, run `uv run pytest`, `uv run ruff check .` and `uv run ruff format --check .`

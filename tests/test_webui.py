@@ -115,7 +115,11 @@ def test_engine_gives_the_webui_only_a_handle(tmp_path, monkeypatch):
 
     assert isinstance(handle, EngineHandle)
     assert not isinstance(handle, Engine)
-    assert [f.name for f in fields(handle)] == ["read_state", "send_command", "read_config"]
+    assert [f.name for f in fields(handle)] == [
+        "read_state",
+        "send_command",
+        "read_config",
+    ]
     state = handle.read_state()
     state["result"]["soc_pct"] = -1  # changing the copy must not reach the engine
     state["sources"].append("other")
@@ -297,7 +301,9 @@ def test_config_form_and_save_through_the_api(tmp_path):
 
 def test_live_commands_are_refused_while_stopped(tmp_path):
     """Checks REQ-36: Set SOC and the other live controls need RUNNING."""
-    engine = start_engine(write_config(tmp_path, {**WEBUI_ON, "start.autostart": False}))
+    engine = start_engine(
+        write_config(tmp_path, {**WEBUI_ON, "start.autostart": False})
+    )
     try:
         status, answer = post(engine, {"command": "set_soc", "value": 50})
         assert status == 400

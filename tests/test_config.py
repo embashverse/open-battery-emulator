@@ -37,7 +37,8 @@ def save(engine, changes, version=None):
     if version is None:
         version = read_form(engine.config_path)["version"]
     command_id = queue_command(
-        engine, {"command": "save_config", "value": {"version": version, "changes": changes}}
+        engine,
+        {"command": "save_config", "value": {"version": version, "changes": changes}},
     )
     step(engine)
     (action,) = [a for a in engine.live_state["actions"] if a["id"] == command_id]
@@ -74,7 +75,9 @@ def test_save_keeps_comments_and_key_order_and_leaves_no_temp_file(tmp_path):
     """Checks REQ-16: Save on a copy of the real config.yaml changes only the
     lines of the changed settings; comments, order and hex numbers stay. The
     temporary file is gone afterwards."""
-    shutil.copytree(REPO / "batteries" / "lfp_100ah", tmp_path / "batteries" / "lfp_100ah")
+    shutil.copytree(
+        REPO / "batteries" / "lfp_100ah", tmp_path / "batteries" / "lfp_100ah"
+    )
     original = (REPO / "config.yaml").read_text()
     original = original.replace("autostart: true ", "autostart: false")
     path = tmp_path / "config.yaml"
@@ -216,7 +219,9 @@ def test_new_interface_section_appears_in_the_form_without_code_changes(tmp_path
     fields = fields_by_path(read_form(path))
 
     assert fields["interfaces.uart.enabled"] == {
-        "path": "interfaces.uart.enabled", "value": False, "type": "bool"
+        "path": "interfaces.uart.enabled",
+        "value": False,
+        "type": "bool",
     }
     assert fields["interfaces.uart.port"]["type"] == "str"
     assert fields["interfaces.uart.baudrate"]["value"] == 115200

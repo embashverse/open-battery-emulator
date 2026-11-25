@@ -97,7 +97,9 @@ def test_play_rebuilds_the_pack_from_the_saved_file(tmp_path):
 
     queue_command(engine, {"command": "stop"})
     run_passes(engine, 1)
-    path.write_text(path.read_text().replace("cells_per_module: 1", "cells_per_module: 4"))
+    path.write_text(
+        path.read_text().replace("cells_per_module: 1", "cells_per_module: 4")
+    )
     queue_command(engine, {"command": "play"})
     run_passes(engine, 1)
 
@@ -134,7 +136,12 @@ def test_play_that_fails_stays_stopped_with_the_error(
     assert engine.live_state["run_state"] == STOPPED
     assert engine.live_state["error"] == message
     (action,) = engine.live_state["actions"]
-    assert action == {"id": command_id, "command": "play", "ok": False, "message": message}
+    assert action == {
+        "id": command_id,
+        "command": "play",
+        "ok": False,
+        "message": message,
+    }
     assert "send" not in calls
     stop_engine(engine)
 
@@ -145,7 +152,10 @@ def test_boot_error_with_the_webui_on_stays_stopped(tmp_path):
     fixed in the Config tab."""
     path = write_config(
         tmp_path,
-        {"battery": "missing", "webui": {"enabled": True, "host": "127.0.0.1", "port": 0}},
+        {
+            "battery": "missing",
+            "webui": {"enabled": True, "host": "127.0.0.1", "port": 0},
+        },
     )
     engine = start_engine(path)
     try:
