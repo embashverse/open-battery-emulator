@@ -43,6 +43,7 @@ from emulator.config import (
     check_config,
     check_speed,
     check_webui,
+    list_interfaces,
     read_config_file,
     read_form,
     write_config_file,
@@ -51,6 +52,7 @@ from emulator.pack import (
     Pack,
     PackResult,
     build_pack,
+    cell_voltage_range,
     pack_info,
     set_hold_soc,
     set_soc,
@@ -102,6 +104,9 @@ class Engine:
     current_sources: dict[str, ModuleType] = field(default_factory=dict)  # can provide
     command_a: float = 0.0  # the last current command received
     command_tick: int | None = None  # tick_count when it arrived; None = none yet
+    # (name, enabled) of every section under interfaces: in config.yaml, for
+    # the source list on the page. Read at start, at every Play and at Save.
+    interface_list: list[tuple[str, bool]] = field(default_factory=list)
     # Web UI (REQ-15, REQ-34). The web thread only puts into `commands` (taking
     # an id under `id_lock`) and reads `live_state`; everything else is used by
     # the engine thread only.
@@ -158,6 +163,7 @@ def start_engine(config_path: Path, speed: float = 1.0) -> Engine:
         webui_enabled=webui_enabled,
         webui_host=webui_host,
         webui_port_setting=webui_port,
+        interface_list=list_interfaces(raw),
     )
 
     if autostart:
@@ -214,6 +220,7 @@ def play(engine: Engine) -> None:
     if engine.run_state == RUNNING:
         raise CommandError("play: already RUNNING")
     raw = read_config_file(engine.config_path)
+    engine.interface_list = list_interfaces(raw)  # even if a check below fails
     config, modules, pack = prepare_run(raw, engine.config_path.parent, engine.speed)
 
     engine.config = config
@@ -253,6 +260,7 @@ def save_settings(engine: Engine, value: dict) -> str:
     document = apply_changes(engine.config_path, value["version"], value["changes"])
     prepare_run(document, engine.config_path.parent, engine.speed)
     write_config_file(engine.config_path, document)
+    engine.interface_list = list_interfaces(document)
 
     message = "Saved to config.yaml. Press Play to use the new settings."
     if any(path in RESTART_NEEDED for path in value["changes"]):
@@ -559,6 +567,10 @@ def make_live_state(engine: Engine, result: PackResult | None) -> dict:
     A new dict every pass, never changed after it is published: the web
     thread reads it while the engine thread is already building the next one.
     """
+    if engine.pack is None:
+        cell_v_min, cell_v_max = None, None
+    else:
+        cell_v_min, cell_v_max = cell_voltage_range(engine.pack)
     return {
         "run_state": engine.run_state,
         "error": engine.error,
@@ -569,7 +581,29 @@ def make_live_state(engine: Engine, result: PackResult | None) -> dict:
         "simulated_a": engine.simulated_a,
         "hold_soc": engine.pack is not None and engine.pack.hold_soc,
         "sources": ["simulated", *engine.current_sources],
+        "source_options": source_options(engine),
+        "timeout_ms": None if engine.config is None else engine.config.timeout_ms,
+        "cell_v_min": cell_v_min,
+        "cell_v_max": cell_v_max,
     }
+
+
+def source_options(engine: Engine) -> list[dict]:
+    """Simulated, then every interface in config.yaml, each with whether it
+    can be the current source right now and, if not, why. The page shows
+    these as they are, so it needs no interface names of its own."""
+    options = [{"name": "simulated", "available": True, "reason": None}]
+    for name, enabled in engine.interface_list:
+        if not enabled:
+            reason = "disabled in Config"
+        elif engine.run_state != RUNNING:
+            reason = "starts at Play"
+        elif name not in engine.current_sources:
+            reason = "has no current input"
+        else:
+            reason = None
+        options.append({"name": name, "available": reason is None, "reason": reason})
+    return options
 
 
 def pick_current(engine: Engine) -> tuple[float, bool]:

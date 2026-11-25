@@ -1,23 +1,48 @@
 /* Battery Emulator web UI. Only system fonts, no files from the internet (REQ-35).
-   Style (PROJECT.md "UI style"): light background, dark grey text, one accent
-   colour for buttons and the selected tab, colour only where it means something. */
+   Style (PROJECT.md "UI style"): calm and minimal, light grey page, white cards,
+   one blue accent for controls and the selected tab, green, amber and red only
+   where something needs attention. Dark mode follows the system setting. */
 
 /* --- 1. Colours ------------------------------------------------------------ */
 
 :root {
-  --bg: #f5f6f8;
+  color-scheme: light dark;  /* native scrollbars and inputs follow the theme */
+  --bg: #f2f3f5;          /* page */
   --card: #ffffff;
   --text: #2b2f33;        /* dark grey */
-  --muted: #6b7178;
-  --border: #dde0e4;
-  --accent: #2463c9;      /* buttons, selected tab, cell grid shades */
+  --muted: #80868d;       /* secondary text */
+  --line: #e3e5e8;        /* borders and the empty part of bars */
+  --cell: #d5d8dc;        /* a normal cell in the grid */
+  --bar: #8d939a;         /* the SOC bar */
+  --accent: #2463c9;      /* controls and the selected tab */
   --accent-text: #ffffff;
-  /* Meaning colours, used nowhere else */
-  --running: #1e7d3a;     /* green: RUNNING */
-  --stopped: #7a8087;     /* grey: STOPPED */
-  --timeout: #b26a00;     /* amber: TIMEOUT */
-  --fault: #c0392b;       /* red: EMPTY, FULL, faults, errors */
-  --fault-bg: #fbeceb;
+  /* Attention colours, used nowhere else */
+  --green: #1f8a43;
+  --amber: #c27c0e;
+  --red: #c7372f;
+  --red-bg: #fbeceb;
+  --tip-bg: #2b2f33;
+  --tip-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191c;
+    --card: #222529;
+    --text: #e4e6e8;
+    --muted: #8f959c;
+    --line: #34383d;
+    --cell: #3d4248;
+    --bar: #9aa0a7;
+    --accent: #5b8fe6;
+    --accent-text: #0f1114;
+    --green: #3fb565;
+    --amber: #e0a03a;
+    --red: #ec6a62;
+    --red-bg: #3a2322;
+    --tip-bg: #e4e6e8;
+    --tip-text: #17191c;
+  }
 }
 
 /* --- 2. Page --------------------------------------------------------------- */
@@ -29,204 +54,346 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
   line-height: 1.4;
 }
 
-h1 { font-size: 1.2rem; margin: 0; margin-right: auto; }
-h2 { font-size: 1rem; margin: 0 0 12px; }
-h3 { font-size: 0.95rem; margin: 16px 0 8px; color: var(--muted); }
+h1 { font-size: 1.1rem; font-weight: 600; margin: 0; }
+h2 { font-size: 0.85rem; font-weight: 600; margin: 0 0 10px; color: var(--muted); }
+h3 { font-size: 0.8rem; font-weight: 600; margin: 8px 0 2px; color: var(--muted); }
+p { margin: 0; }
 
 main {
-  max-width: 1100px;
+  width: 100%;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 0 16px 24px;
+  padding: 0 16px 16px;
 }
 
-.tab-page { display: flex; flex-direction: column; gap: 16px; }
 .tab-page[hidden] { display: none; }
 
 .card {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-}
-
-.note { font-size: 0.85rem; color: var(--muted); margin: 0 0 12px; }
-.hint { font-size: 0.85rem; color: var(--muted); margin: 10px 0 0; }
-
-/* --- 3. Header and tabs ---------------------------------------------------- */
-
-header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px 16px;
-  max-width: 1100px;
-  margin: 0 auto;
-}
-
-.run-state {
-  font-weight: 700;
-  font-size: 0.9rem;
-  padding: 4px 12px;
-  border-radius: 14px;
-  color: #fff;
-  background: var(--stopped);
-}
-.run-state.running { background: var(--running); }
-
-.play-stop {
-  font-size: 1.05rem;
-  font-weight: 700;
-  padding: 10px 28px;
-  min-width: 110px;
-}
-
-.connection { font-size: 0.8rem; color: var(--muted); }
-.connection.lost { color: var(--fault); }
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  max-width: 1100px;
-  margin: 0 auto 16px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.tab {
-  background: none;
-  color: var(--muted);
-  border-radius: 0;
-  border-bottom: 3px solid transparent;
-  padding: 8px 16px;
-}
-.tab.selected { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-
-.banner {
-  max-width: 1068px;
-  margin: 0 auto 12px;
-  padding: 10px 14px;
-  border-radius: 6px;
-  background: var(--card);
-  border: 1px solid var(--border);
-}
-.banner[hidden] { display: none; }
-.banner.error { background: var(--fault-bg); color: var(--fault); border-color: transparent; }
-#tab-config .banner { margin: 0; max-width: none; }
-
-/* --- 4. Live value tiles --------------------------------------------------- */
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 8px;
-}
-
-.tile {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
+  border-radius: 12px;
+  padding: 14px 16px;
 }
 
 .label { font-size: 0.8rem; color: var(--muted); }
-.value { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.value.fault { color: var(--fault); }
-.stopped .value { color: var(--muted); }  /* last values, frozen */
+.small { font-size: 0.8rem; color: var(--muted); }
+.note { font-size: 0.8rem; color: var(--muted); }
 
-.flags { gap: 4px; }
-.flag {
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 4px;
-  width: fit-content;
-  color: var(--muted);
-  border: 1px solid var(--border);
+/* --- 3. Header, banners and tabs ------------------------------------------- */
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 12px 16px 8px;
 }
-.flag.timeout.on { background: var(--timeout); color: #fff; border-color: transparent; }
-.flag.fault.on { background: var(--fault); color: #fff; border-color: transparent; }
 
-/* --- 5. Cell grid (shades of the accent colour) ---------------------------- */
+.title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+
+.connection { font-size: 0.8rem; color: var(--muted); }
+.connection.lost { color: var(--red); }
+
+/* One button that shows the run state and is the control. */
+.run-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-weight: 600;
+}
+.run-button .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.run-button.running .dot { background: var(--green); }
+.run-button .symbol { width: 10px; height: 10px; margin-left: 4px; }
+.run-button .symbol.stop { background: var(--accent); border-radius: 2px; }
+.run-button .symbol.play {   /* a triangle pointing right, drawn with borders */
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 6px 0 6px 10px;
+  border-color: transparent transparent transparent var(--accent);
+}
+.run-button.busy .symbol { opacity: 0.3; }
+
+.banner {
+  width: calc(100% - 32px);
+  max-width: 1368px;
+  margin: 0 auto 10px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 0.9rem;
+}
+.banner[hidden] { display: none; }
+.banner.error { background: var(--red-bg); color: var(--red); }
+#tab-config .banner { margin: 0 0 10px; width: auto; max-width: none; }
+
+/* A compact segmented switch: the tabs, and the current source. */
+.tabs, .segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--line);
+}
+.tabs { margin: 0 0 12px 16px; align-self: flex-start; }
+@media (min-width: 1432px) {
+  .tabs { margin-left: calc((100vw - 1400px) / 2 + 16px); }
+}
+
+.tab, .segment {
+  background: none;
+  color: var(--muted);
+  padding: 4px 14px;
+  border-radius: 7px;
+  font-size: 0.85rem;
+}
+.tab.selected, .segment.selected {
+  background: var(--card);
+  color: var(--accent);
+  font-weight: 600;
+}
+.segment.unavailable { opacity: 0.45; cursor: help; }
+
+/* --- 4. Live tab ----------------------------------------------------------- */
+
+.live { display: flex; flex-direction: column; gap: 12px; }
+
+.summary-row { display: flex; flex-direction: column; gap: 12px; }
+
+.soc-card { display: flex; flex-direction: column; gap: 4px; }
+.big-value {
+  font-size: 2.6rem;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.bar { height: 4px; border-radius: 2px; background: var(--line); margin: 4px 0 8px; }
+.bar-fill { height: 100%; width: 0; border-radius: 2px; background: var(--bar); }
+.line { font-variant-numeric: tabular-nums; }
+
+.small-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.small-card { display: flex; flex-direction: column; padding: 10px 14px; }
+.value { font-size: 1.2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.value.attention { color: var(--red); cursor: help; }
+
+.stopped .big-value, .stopped .value, .stopped .line { color: var(--muted); }  /* last values, frozen */
+
+.pills { display: flex; gap: 6px; min-height: 22px; margin-top: 4px; }
+.pill {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: #fff;
+  cursor: help;
+}
+.pill[hidden] { display: none; }
+.pill.amber { background: var(--amber); }
+.pill.red { background: var(--red); }
+
+/* --- 5. Cell grid ---------------------------------------------------------- */
+/* Neutral by default; amber and red only for cells that need attention. */
+
+.grid-card { display: flex; flex-direction: column; min-height: 0; }
+.grid-scroll { overflow: auto; min-height: 0; flex: 1; }
 
 .grid {
   display: grid;
   gap: 3px;
-  /* columns are set by app.js: one label column, then one per cell */
+  padding: 2px;  /* room for the outline of the lowest and highest cell */
+  /* columns and --row-h are set by app.js */
 }
 
 .module-label {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--muted);
   padding-right: 6px;
   align-self: center;
+  line-height: 1;
 }
 
 .cell {
-  height: 22px;
+  height: var(--row-h, 16px);
   border-radius: 3px;
   min-width: 0;
+  background: var(--cell);
   cursor: pointer;
 }
-.cell.selected { outline: 2px solid var(--text); outline-offset: 1px; }
+.cell.amber { background: var(--amber); }
+.cell.red { background: var(--red); }
+.cell.extreme { outline: 1.5px solid var(--text); outline-offset: 0; }
 
-/* --- 6. Forms and buttons -------------------------------------------------- */
+.legend { font-size: 0.75rem; color: var(--muted); margin-top: 10px; }
+.key { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 3px; }
+.legend .key:not(:first-child) { margin-left: 12px; }
+.key.outline { background: var(--cell); outline: 1.5px solid var(--text); }
+.key.amber { background: var(--amber); }
+.key.red { background: var(--red); }
+
+/* --- 6. Live controls ------------------------------------------------------ */
+
+.controls-card { display: flex; flex-direction: column; gap: 4px; }
+.control { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.control-label { font-size: 0.85rem; }
+.row { display: flex; gap: 8px; align-items: center; }
+.segmented { flex-wrap: wrap; align-self: flex-start; }
+
+.stepper { display: flex; align-items: center; gap: 6px; }
+.stepper input { width: 100px; text-align: center; }
+.step { width: 34px; padding: 6px 0; font-size: 1rem; line-height: 1; }
+
+input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
+
+/* Toggle switch: a checkbox drawn as a track with a knob. */
+.switch-row { flex-direction: row; align-items: center; justify-content: space-between; }
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--line);
+  position: relative;
+  cursor: pointer;
+  margin: 0;
+  transition: background 0.15s;
+}
+.switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+}
+.switch:checked { background: var(--accent); }
+.switch:checked::before { left: 18px; }
+.switch:disabled { opacity: 0.45; cursor: default; }
+
+/* --- 7. Config tab --------------------------------------------------------- */
+
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.save-row .message { margin-left: auto; }
+.save-row button { padding: 7px 28px; }
+
+/* Cards of uneven height packed into columns, so everything fits. */
+.config-cards { column-width: 250px; column-gap: 12px; }
+.config-cards .card {
+  break-inside: avoid;
+  margin-bottom: 12px;
+  display: inline-block;  /* older browsers ignore break-inside on blocks */
+  width: 100%;
+}
+.config-cards .card[hidden] { display: none; }
+.config-cards .note { margin-bottom: 6px; }
+
+.fields { display: flex; flex-direction: column; gap: 5px; }
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  align-items: center;
+  gap: 8px;
+}
+.field > span { font-size: 0.8rem; color: var(--muted); }
+.field.check { grid-template-columns: minmax(0, 1fr) auto; }
+.field.changed > span { color: var(--accent); font-weight: 600; }
+
+.pack-summary { margin-top: 8px; font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* --- 8. Inputs and buttons ------------------------------------------------- */
 
 fieldset.plain { border: none; margin: 0; padding: 0; min-width: 0; }
-#config-fields { display: flex; flex-direction: column; gap: 16px; }
-
-.control { margin-bottom: 14px; display: flex; flex-direction: column; gap: 4px; }
-.control label { font-size: 0.9rem; }
-.row { display: flex; gap: 8px; }
-
-.fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px 16px;
-}
-.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.field > span { font-size: 0.85rem; color: var(--muted); }
-.field.check { flex-direction: row; align-items: center; gap: 8px; }
-.field.changed > span { color: var(--accent); font-weight: 600; }
 
 input[type="number"], input[type="text"], select {
   font: inherit;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  font-size: 0.85rem;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   background: var(--card);
   color: var(--text);
   min-width: 0;
   width: 100%;
-  max-width: 260px;
 }
-.row input { flex: 1; }
 input:disabled, select:disabled { background: var(--bg); color: var(--muted); }
+input[type="checkbox"]:not(.switch) { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
 
 button {
   font: inherit;
-  padding: 8px 16px;
+  font-size: 0.85rem;
+  padding: 6px 14px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--accent);
   color: var(--accent-text);
   cursor: pointer;
 }
 button:disabled { opacity: 0.45; cursor: default; }
 
-.check { display: flex; align-items: center; gap: 8px; }
-.check input { width: 20px; height: 20px; }
+.message { min-height: 1.3em; font-size: 0.85rem; }
+.message.error { color: var(--red); }
+.message.ok { color: var(--green); }
 
-.summary { margin: 12px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* --- 9. Tooltip (hover or tap), one element placed by app.js --------------- */
 
-.save-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-.save-row button { padding: 10px 32px; }
+.tip {
+  position: fixed;
+  z-index: 10;
+  max-width: 260px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--tip-bg);
+  color: var(--tip-text);
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+.tip[hidden] { display: none; }
 
-.message { min-height: 1.4em; margin: 0; font-size: 0.9rem; }
-.message.error { color: var(--fault); }
-.message.ok { color: var(--running); }
+/* --- 10. Laptop and larger: each tab fits on one screen -------------------- */
+/* The page is exactly the window height; the cell grid takes what is left
+   and scrolls inside its own card when a pack is too large. */
+
+@media (min-width: 900px) {
+  body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  main { flex: 1; min-height: 0; }
+  .tab-page { height: 100%; }
+
+  .live {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "summary controls" "grid controls";
+  }
+  .summary-row { grid-area: summary; flex-direction: row; }
+  .soc-card { flex: 1; min-width: 0; }
+  .small-cards { grid-template-columns: 1fr; width: 200px; gap: 8px; }
+  .grid-card { grid-area: grid; }
+  .controls-card { grid-area: controls; align-self: start; }
+
+  #tab-config { overflow: auto; }  /* only if a config.yaml is very long */
+}

@@ -202,6 +202,12 @@ def clamp_soc(soc_pct: float) -> float:
     return max(0.0, min(100.0, soc_pct))
 
 
+def cell_voltage_range(pack: Pack) -> tuple[float, float]:
+    """v_min and v_max of one cell, from cell.csv. The web UI marks a cell
+    at or beyond either one."""
+    return pack.battery.v_min, pack.battery.v_max
+
+
 def pack_info(pack: Pack) -> PackInfo:
     """Describe the pack for the interfaces: its shape and highest values."""
     battery = pack.battery

@@ -3,16 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Battery Emulator</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- 1. Header, on every tab: run state and one big Play or Stop button -->
-  <header>
-    <h1>Battery Emulator</h1>
-    <span id="run-state" class="run-state">-</span>
-    <button id="play-stop" class="play-stop" type="button" disabled>Play</button>
-    <span id="connection" class="connection">connecting...</span>
+  <!-- 1. Header, on every tab: title, connection, and one run button that
+       shows the run state and is the Play / Stop control -->
+  <header class="top">
+    <div class="title">
+      <h1>Battery Emulator</h1>
+      <span id="connection" class="connection">Connecting…</span>
+    </div>
+    <button id="run-button" class="run-button" type="button" disabled>
+      <span class="dot"></span>
+      <span id="run-label">Stopped</span>
+      <span class="symbol play"></span>
+    </button>
   </header>
 
   <p id="run-error" class="banner error" role="alert" hidden></p>
@@ -24,60 +31,83 @@
 
   <main>
     <!-- 2. Live tab -->
-    <div id="tab-live" class="tab-page">
-      <section class="tiles">
-        <div class="tile"><span class="label">State</span><span id="state" class="value">-</span></div>
-        <div class="tile"><span class="label">Current</span><span id="current" class="value">-</span></div>
-        <div class="tile"><span class="label">Voltage</span><span id="voltage" class="value">-</span></div>
-        <div class="tile"><span class="label">SOC</span><span id="soc" class="value">-</span></div>
-        <div class="tile"><span class="label">Lowest cell</span><span id="lowest" class="value">-</span></div>
-        <div class="tile"><span class="label">Highest cell</span><span id="highest" class="value">-</span></div>
-        <div class="tile"><span class="label">Max charge</span><span id="max-charge" class="value">-</span></div>
-        <div class="tile"><span class="label">Max discharge</span><span id="max-discharge" class="value">-</span></div>
-        <div class="tile"><span class="label">Elapsed</span><span id="elapsed" class="value">-</span></div>
-        <div class="tile flags">
-          <span class="label">Flags</span>
-          <span id="flag-timeout" class="flag timeout">TIMEOUT</span>
-          <span id="flag-temp" class="flag fault">TEMPERATURE</span>
+    <div id="tab-live" class="tab-page live" hidden>
+      <section class="summary-row">
+        <div class="card soc-card">
+          <span class="label">SOC</span>
+          <span id="soc" class="big-value">–</span>
+          <div class="bar"><div id="soc-bar" class="bar-fill"></div></div>
+          <p id="cells-line" class="line">–</p>
+          <p id="cells-where" class="small">&nbsp;</p>
+          <p id="limits-line" class="small">&nbsp;</p>
+          <div class="pills">
+            <span id="pill-timeout" class="pill amber" hidden>Timeout</span>
+            <span id="pill-temp" class="pill red" hidden
+              data-tip="temperature outside the battery's operating range, charge and discharge limits are 0">Temperature</span>
+          </div>
+        </div>
+        <div class="small-cards">
+          <div class="card small-card">
+            <span class="label">Voltage</span>
+            <span id="voltage" class="value">–</span>
+          </div>
+          <div class="card small-card">
+            <span class="label">Current</span>
+            <span id="current" class="value">–</span>
+            <span id="current-source" class="small">&nbsp;</span>
+          </div>
+          <div class="card small-card">
+            <span class="label">State</span>
+            <span id="state" class="value">–</span>
+            <span id="elapsed" class="small">&nbsp;</span>
+          </div>
         </div>
       </section>
 
-      <section class="card">
-        <h2>Cell voltages</h2>
-        <div id="grid" class="grid"></div>
-        <p id="cell-info" class="hint">Tap or hover a cell to see its voltage. Darker = higher voltage.</p>
+      <section class="card grid-card">
+        <h2>Cells</h2>
+        <div class="grid-scroll">
+          <div id="grid" class="grid"></div>
+        </div>
+        <p class="legend">
+          <span class="key outline"></span> lowest and highest cell
+          <span class="key amber"></span> more than <span id="warn-mv">50</span> mV from the pack average
+          <span class="key red"></span> at minimum or maximum voltage
+        </p>
       </section>
 
-      <section class="card">
+      <section class="card controls-card">
         <h2>Controls</h2>
-        <p class="note">Changes here are live only and are not saved to config.yaml. They work while RUNNING.</p>
         <fieldset id="live-controls" class="plain">
           <div class="control">
-            <label for="source">Current source</label>
-            <select id="source"></select>
+            <span class="control-label">Current source</span>
+            <div id="source" class="segmented"></div>
           </div>
 
           <form id="current-form" class="control">
-            <label for="current-input">Simulated current (A, discharge positive)</label>
-            <div class="row">
+            <label for="current-input" class="control-label">Simulated current (A, discharge positive)</label>
+            <div class="stepper">
+              <button type="button" id="current-minus" class="step" aria-label="1 A less">−</button>
               <input id="current-input" type="number" step="any" inputmode="decimal">
-              <button type="submit">Set</button>
+              <button type="button" id="current-plus" class="step" aria-label="1 A more">+</button>
             </div>
           </form>
 
           <form id="soc-form" class="control">
-            <label for="soc-input">Set SOC (%)</label>
+            <label for="soc-input" class="control-label">Set SOC <span id="soc-input-value" class="small">50 %</span></label>
             <div class="row">
-              <input id="soc-input" type="number" step="any" min="0" max="100" inputmode="decimal">
-              <button type="submit">Set</button>
+              <input id="soc-input" type="range" min="0" max="100" step="1" value="50">
+              <button type="submit">Apply</button>
             </div>
           </form>
 
-          <div class="control">
-            <label class="check"><input id="hold" type="checkbox"> Hold SOC</label>
-          </div>
+          <label class="control switch-row">
+            <span class="control-label">Hold SOC</span>
+            <input id="hold" type="checkbox" class="switch">
+          </label>
         </fieldset>
         <p id="message" class="message" role="status"></p>
+        <p class="note">Live changes only, not saved to config.yaml. They work while running.</p>
       </section>
     </div>
 
@@ -87,10 +117,16 @@
         config.yaml changed since this page loaded it.
         <button id="reload" type="button">Reload</button>
       </p>
-      <p id="config-lock" class="note">Press Stop to edit settings. Saved settings are used at the next Play.</p>
 
       <form id="config-form">
-        <fieldset id="config-fields" class="plain">
+        <div class="save-row">
+          <p id="config-lock" class="note">Press Stop to edit settings.</p>
+          <p class="note">Saved settings are used at the next Play.</p>
+          <p id="config-message" class="message" role="status"></p>
+          <button id="save" type="submit">Save</button>
+        </div>
+
+        <fieldset id="config-fields" class="plain config-cards">
           <section class="card" data-group="battery">
             <h2>Battery</h2>
             <div class="fields"></div>
@@ -98,7 +134,7 @@
           <section class="card" data-group="pack">
             <h2>Pack</h2>
             <div class="fields"></div>
-            <p id="pack-summary" class="summary"></p>
+            <p id="pack-summary" class="pack-summary"></p>
           </section>
           <section class="card" data-group="start">
             <h2>Start</h2>
@@ -114,27 +150,25 @@
           </section>
           <section class="card" data-group="interfaces">
             <h2>Interfaces</h2>
-            <p class="note">Every section under interfaces: in config.yaml. Interface settings are checked by the interface itself at Play.</p>
+            <p class="note">Every section under interfaces: in config.yaml, checked by the interface itself at Play.</p>
             <div class="fields"></div>
           </section>
           <section class="card" data-group="webui">
             <h2>Web UI</h2>
-            <p class="note">host and port are saved, but only take effect after restarting the program.</p>
+            <p class="note">host and port take effect only after restarting the program.</p>
             <div class="fields"></div>
           </section>
           <section class="card" data-group="other" hidden>
             <h2>Other settings</h2>
             <div class="fields"></div>
           </section>
-
-          <div class="save-row">
-            <button id="save" type="submit">Save</button>
-            <p id="config-message" class="message" role="status"></p>
-          </div>
         </fieldset>
       </form>
     </div>
   </main>
+
+  <!-- 4. One tooltip box, filled and placed by app.js on hover or tap -->
+  <div id="tip" class="tip" role="tooltip" hidden></div>
 
   <script src="app.js"></script>
 </body>

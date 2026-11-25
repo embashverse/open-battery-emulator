@@ -213,6 +213,23 @@ def check_interfaces(raw: dict, config_folder: Path) -> list[tuple[str, dict]]:
     return enabled
 
 
+def list_interfaces(raw: dict) -> list[tuple[str, bool]]:
+    """Name and enabled value of every section under interfaces:, in file
+    order, for the source list in the web UI.
+
+    Never raises: a broken section is left out here and reported by
+    check_interfaces at Play.
+    """
+    sections = raw.get("interfaces")
+    if not isinstance(sections, dict):
+        return []
+    found = []
+    for name, settings in sections.items():
+        if isinstance(name, str) and isinstance(settings, dict):
+            found.append((name, settings.get("enabled") is True))
+    return found
+
+
 def resolve_paths(settings: dict, config_folder: Path) -> dict:
     """A copy of settings where every relative string that names an existing
     file next to config.yaml is replaced by its full path. Nested sections are

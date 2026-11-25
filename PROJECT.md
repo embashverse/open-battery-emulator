@@ -522,12 +522,21 @@ Deployment
 
 The web UI follows a few rules, so it stays calm and readable:
 
-- Light background, dark grey text, system fonts.
-- One accent colour, for buttons and the selected tab.
-- Colour only where it means something: green RUNNING, grey STOPPED, amber TIMEOUT, red
-  EMPTY, FULL or faults (like the temperature flag and errors).
-- The cell grid uses shades of one colour: light for the lowest cell, dark for the highest.
-- Two tabs, Live and Config, under a header with the run state and the Play / Stop button.
+- Calm and minimal, very little decoration: system fonts, light grey page, white cards
+  with rounded corners, generous spacing, dark grey text and lighter grey secondary text.
+  Dark mode follows the system setting.
+- One blue accent, for controls and the selected tab.
+- Colour only where something needs attention: green dot while running, red for EMPTY,
+  FULL, the temperature flag, errors and a lost connection, amber for the timeout flag.
+- The header has the title with a small connection indicator, and one run button that
+  shows the run state and is the Play / Stop control.
+- Two tabs, Live and Config, each fits on one laptop screen without scrolling. A pack too
+  large for the screen scrolls inside the cell grid card. On a phone the page scrolls.
+- Cell grid: cells are neutral. Amber for a cell more than 50 mV from the pack average, red
+  for a cell at or beyond its minimum or maximum voltage. The lowest and highest cell get
+  a thin outline. A one line legend explains this.
+- Flags and the FULL and EMPTY states explain themselves on hover or tap. A current source
+  that cannot be chosen right now is shown greyed with the reason.
 
 ## How we work (light V-model)
 
@@ -565,7 +574,7 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` |19.11.2026 |Pass |
 | REQ-15 | `webui.enabled: true`, start the emulator, open `http://localhost:8080` on the laptop | values update about twice a second, the cell grid shows every module, Set SOC / Hold SOC / simulated current change the values on the next update, SOC 150 shows an error | | |
 | REQ-15 | on the Pi, open `http://battery.local:8080` on a phone on the same network | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
-| REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, badge grey STOPPED, Config fields editable. Play: frames again, badge green RUNNING, fields locked | | |
+| REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, run button shows a grey dot and Stopped, Config fields editable. Play: frames again, run button shows a green dot and Running, fields locked | | |
 | REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged | | |
 | REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload banner appears; Reload shows the new value | | |
 

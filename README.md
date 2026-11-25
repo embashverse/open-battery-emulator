@@ -124,12 +124,14 @@ bad setting in `config.yaml` stops it at start with a message naming the setting
 
 ### Web UI
 
-An optional page in the browser with two tabs and a Play / Stop button at the top. It
-needs no internet: everything comes from the emulator itself.
+An optional page in the browser with two tabs. At the top, one run button shows whether
+the emulator is running and plays or stops it. It needs no internet: everything comes
+from the emulator itself.
 
-- **Live:** state, current, voltage, SOC, lowest and highest cell, limits, flags, a grid
-  of every cell voltage (darker = higher), and controls for the current source, the
-  simulated current, Set SOC and Hold SOC.
+- **Live:** SOC, voltage, current, state, the cell voltage range and spread, limits,
+  flags (hover or tap one for an explanation), a grid of every cell (amber = far from the
+  pack average, red = at its minimum or maximum voltage, hover or tap for its voltage),
+  and controls for the current source, the simulated current, Set SOC and Hold SOC.
 - **Config:** every setting in `config.yaml`, grouped: battery (a list of the folders in
   `batteries/`), pack (with a summary like `96s2p · 316 V nominal · 200 Ah`), start,
   cell variation, current, interfaces and web UI. Every section under `interfaces:`

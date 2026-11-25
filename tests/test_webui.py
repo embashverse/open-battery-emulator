@@ -263,6 +263,51 @@ def test_source_that_cannot_provide_current_returns_400(tmp_path, monkeypatch):
         stop_engine(engine)
 
 
+def test_state_lists_every_interface_with_availability_and_reason(
+    tmp_path, monkeypatch
+):
+    """Checks REQ-15, REQ-18: the state lists simulated and every interface in
+    config.yaml, in file order, each with whether it can provide current now
+    and why not, so the page can show them without knowing any by name."""
+    add_fake_interface(monkeypatch, "withinput", provides_current=True)
+    add_fake_interface(monkeypatch, "noinput", provides_current=False)
+    path = write_config(
+        tmp_path,
+        {
+            **WEBUI_ON,
+            "start.autostart": False,
+            "interfaces.withinput": {"enabled": True},
+            "interfaces.noinput": {"enabled": True},
+            "interfaces.off": {"enabled": False},  # no folder: never loaded
+        },
+    )
+    engine = start_engine(path)
+    try:
+        assert get_json(engine, "/api/state")["source_options"] == [
+            {"name": "simulated", "available": True, "reason": None},
+            {"name": "withinput", "available": False, "reason": "starts at Play"},
+            {"name": "noinput", "available": False, "reason": "starts at Play"},
+            {"name": "off", "available": False, "reason": "disabled in Config"},
+        ]
+
+        assert post(engine, {"command": "play", "value": None})[0] == 200
+        step(engine)
+        state = get_json(engine, "/api/state")
+
+        assert state["source_options"] == [
+            {"name": "simulated", "available": True, "reason": None},
+            {"name": "withinput", "available": True, "reason": None},
+            {"name": "noinput", "available": False, "reason": "has no current input"},
+            {"name": "off", "available": False, "reason": "disabled in Config"},
+        ]
+        assert state["sources"] == ["simulated", "withinput"]
+        # Used by the page for the Timeout tip and the cell grid colours.
+        assert state["timeout_ms"] == 500
+        assert (state["cell_v_min"], state["cell_v_max"]) == (2.5, 3.65)
+    finally:
+        stop_engine(engine)
+
+
 # --- Config tab ---------------------------------------------------------------
 
 
