@@ -3,74 +3,212 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Battery Emulator</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
+  <!-- 1. Header, on every tab: title on the left, connection on the right -->
+  <header class="top">
     <h1>Battery Emulator</h1>
-    <span id="connection" class="badge">connecting...</span>
+    <span id="connection" class="connection"><span class="dot"></span><span id="connection-text">Connecting…</span></span>
   </header>
 
+  <nav class="tabs">
+    <button type="button" class="tab" data-tab="live">Live</button>
+    <button type="button" class="tab" data-tab="config">Config</button>
+  </nav>
+
   <main>
-    <!-- 1. Live values -->
-    <section class="tiles">
-      <div class="tile"><span class="label">State</span><span id="state" class="value">-</span></div>
-      <div class="tile"><span class="label">Current</span><span id="current" class="value">-</span></div>
-      <div class="tile"><span class="label">Voltage</span><span id="voltage" class="value">-</span></div>
-      <div class="tile"><span class="label">SOC</span><span id="soc" class="value">-</span></div>
-      <div class="tile"><span class="label">Lowest cell</span><span id="lowest" class="value">-</span></div>
-      <div class="tile"><span class="label">Highest cell</span><span id="highest" class="value">-</span></div>
-      <div class="tile"><span class="label">Max charge</span><span id="max-charge" class="value">-</span></div>
-      <div class="tile"><span class="label">Max discharge</span><span id="max-discharge" class="value">-</span></div>
-      <div class="tile"><span class="label">Elapsed</span><span id="elapsed" class="value">-</span></div>
-      <div class="tile flags">
-        <span class="label">Flags</span>
-        <span id="flag-timeout" class="flag">TIMEOUT</span>
-        <span id="flag-temp" class="flag">TEMPERATURE</span>
+    <!-- 3. Live tab: summary and cells on the left, controls and run button on the right -->
+    <div id="tab-live" class="tab-page live" hidden>
+      <!-- Left column: the summary, and the cell card as tall as its grid -->
+      <div class="live-main">
+        <section class="summary-row">
+          <div class="card soc-card">
+            <span class="label">SOC</span>
+            <div class="soc-top">
+              <span id="soc" class="big-value">–</span>
+              <span id="eta" class="eta"></span>
+            </div>
+            <div id="bar" class="bar"><div id="soc-bar" class="bar-fill"></div></div>
+            <!-- Symbols and numbers only; each explains itself on hover or tap -->
+            <div class="stats">
+              <div class="stat-group">
+                <span class="stat" data-tip="Lowest cell">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 3h8L6 9z" fill="currentColor"/></svg>
+                  <b id="low-v">–</b><span id="low-where" class="where"></span></span>
+                <span class="stat" data-tip="Highest cell">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 9h8L6 3z" fill="currentColor"/></svg>
+                  <b id="high-v">–</b><span id="high-where" class="where"></span></span>
+                <span class="stat" data-tip="Spread between the highest and lowest cell">
+                  <span class="ico txt">Δ</span><b id="spread">–</b></span>
+              </div>
+              <div class="stat-group">
+                <span class="stat" data-tip="Charge limit: the most current the pack accepts while charging">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 1.5h8M6 10.5V4M3.5 6.5L6 4l2.5 2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <b id="charge-limit">–</b></span>
+                <span class="stat" data-tip="Discharge limit: the most current the pack delivers while discharging">
+                  <svg viewBox="0 0 12 12" class="ico" aria-hidden="true"><path d="M2 10.5h8M6 1.5V8M3.5 5.5L6 8l2.5-2.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <b id="discharge-limit">–</b></span>
+                <span id="pill-timeout" class="flag amber" hidden>Timeout</span>
+                <span id="pill-temp" class="flag red" hidden
+                  data-tip="temperature outside the battery's operating range, charge and discharge limits are 0">Temperature</span>
+              </div>
+            </div>
+          </div>
+          <div class="small-cards">
+            <div class="card small-card">
+              <span class="label">Voltage</span>
+              <span id="voltage" class="value">–</span>
+            </div>
+            <div class="card small-card">
+              <span class="label">Current</span>
+              <span id="current" class="value">–</span>
+            </div>
+            <div class="card small-card">
+              <span class="label">State</span>
+              <span id="state" class="value state-value">–</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="card grid-card">
+          <h2>Cells</h2>
+          <div class="grid-area">
+            <div id="grid" class="grid"></div>
+          </div>
+          <p class="legend">
+            <span class="item"><span class="key ok"></span>Normal</span>
+            <span class="item"><span class="key outline"></span>Lowest / highest</span>
+            <span class="item"><span class="key amber"></span><span>Off by more than <span id="warn-mv">50</span> mV</span></span>
+            <span class="item"><span class="key red"></span>At limit</span>
+          </p>
+        </section>
       </div>
-    </section>
 
-    <!-- 2. Cell voltages, one row per module -->
-    <section class="card">
-      <h2>Cell voltages</h2>
-      <div id="grid" class="grid"></div>
-      <p id="cell-info" class="hint">Tap or hover a cell to see its voltage.</p>
-    </section>
+      <div class="side">
+        <section class="card controls-card">
+          <h2>Controls</h2>
+          <fieldset id="live-controls" class="plain">
+            <div class="control">
+              <span class="control-label">Current source</span>
+              <div id="source" class="segmented"></div>
+            </div>
 
-    <!-- 3. Controls -->
-    <section class="card">
-      <h2>Controls</h2>
-      <p class="note">Changes here are live only and are not saved to config.yaml.</p>
+            <!-- Direction and a positive number of amps: the page sends + for
+                 discharge and - for charge, so nobody types a minus. -->
+            <fieldset id="sim-current" class="plain control">
+              <span class="control-label">Simulated current</span>
+              <div id="direction" class="segmented">
+                <button type="button" class="segment" data-direction="discharge">Discharge</button>
+                <button type="button" class="segment charge" data-direction="charge">Charge</button>
+              </div>
+              <div class="stepper">
+                <button type="button" id="current-minus" class="step" aria-label="1 A less">−</button>
+                <input id="current-input" type="number" min="0" step="any" inputmode="decimal" aria-label="Simulated current in A">
+                <span class="unit">A</span>
+                <button type="button" id="current-plus" class="step" aria-label="1 A more">+</button>
+              </div>
+            </fieldset>
 
-      <div class="control">
-        <label for="source">Current source</label>
-        <select id="source"></select>
-      </div>
+            <form id="soc-form" class="control">
+              <label for="soc-input" class="control-label">Set SOC <span id="soc-input-value" class="small">50 %</span></label>
+              <div class="row">
+                <input id="soc-input" type="range" min="0" max="100" step="1" value="50">
+                <button type="submit">Apply</button>
+              </div>
+            </form>
 
-      <form id="current-form" class="control">
-        <label for="current-input">Simulated current (A, discharge positive)</label>
-        <div class="row">
-          <input id="current-input" type="number" step="any" inputmode="decimal">
-          <button type="submit">Set</button>
+            <label class="control switch-row">
+              <span class="control-label">Hold SOC</span>
+              <input id="hold" type="checkbox" class="switch">
+            </label>
+          </fieldset>
+          <p class="note">Live changes only, not saved to config.yaml.</p>
+        </section>
+
+        <div class="card small-card time-card">
+          <span class="label">Run time</span>
+          <span id="elapsed" class="value">0:00:00</span>
         </div>
-      </form>
 
-      <form id="soc-form" class="control">
-        <label for="soc-input">Set SOC (%)</label>
-        <div class="row">
-          <input id="soc-input" type="number" step="any" min="0" max="100" inputmode="decimal">
-          <button type="submit">Set</button>
-        </div>
-      </form>
+        <!-- One button in two equal halves: the run state on the left, what
+             pressing it does on the right. -->
+        <button id="run-button" class="run-button" type="button" disabled>
+          <span class="run-state"><span class="dot"></span><span id="run-label">Stopped</span></span>
+          <span class="run-action"><span class="symbol play"></span><span id="run-verb">Play</span></span>
+        </button>
 
-      <div class="control">
-        <label class="check"><input id="hold" type="checkbox"> Hold SOC</label>
+        <!-- Messages of the Live tab: errors stay until closed, confirmations fade -->
+        <div id="live-messages" class="messages" role="status" aria-live="polite"></div>
       </div>
+    </div>
 
-      <p id="message" class="message" role="status"></p>
-    </section>
+    <!-- 4. Config tab: settings from config.yaml, editable while STOPPED.
+         An even grid of cards; Interfaces spans two columns at the bottom,
+         with the Save card next to it. -->
+    <div id="tab-config" class="tab-page" hidden>
+      <form id="config-form" class="config-cards">
+        <fieldset id="config-fields" class="plain">
+          <section class="card" data-group="battery">
+            <h2>Battery</h2>
+            <div class="fields"></div>
+          </section>
+          <section class="card" data-group="pack">
+            <h2>Pack</h2>
+            <div class="fields"></div>
+            <p id="pack-summary" class="pack-summary"></p>
+          </section>
+          <section class="card" data-group="start">
+            <h2>Start</h2>
+            <div class="fields"></div>
+          </section>
+          <section class="card" data-group="variation">
+            <h2>Cell variation</h2>
+            <div class="fields"></div>
+          </section>
+          <section class="card" data-group="current">
+            <h2>Current</h2>
+            <div class="fields"></div>
+          </section>
+          <section class="card" data-group="webui">
+            <h2>Web UI</h2>
+            <p class="note">host and port take effect only after restarting the program.</p>
+            <div class="fields"></div>
+          </section>
+          <section class="card wide" data-group="other" hidden>
+            <h2>Other settings</h2>
+            <div class="fields"></div>
+          </section>
+          <section class="card span2" data-group="interfaces">
+            <h2>Interfaces</h2>
+            <p class="note">Every section under interfaces: in config.yaml, checked by the interface itself at Play.</p>
+            <div class="fields"></div>
+          </section>
+        </fieldset>
+
+        <!-- The Save card: messages go in a fixed slot above the status line,
+             so the Save button never moves. -->
+        <section class="card save-card">
+          <h2>Save</h2>
+          <div class="reminder">
+            <span class="icon" aria-hidden="true">!</span>
+            <span>Changes are only used after you press <b>Save</b>.</span>
+          </div>
+          <p class="note">Writes config.yaml and keeps its comments.</p>
+          <div class="messages-slot">
+            <div id="config-messages" class="messages" role="status" aria-live="polite"></div>
+          </div>
+          <p id="save-status" class="save-status">&nbsp;</p>
+          <button id="save" class="save-button" type="submit"><span class="tick" aria-hidden="true"></span><span id="save-label">Save</span></button>
+        </section>
+      </form>
+    </div>
   </main>
+
+  <!-- 5. One tooltip box, filled and placed by app.js on hover or tap -->
+  <div id="tip" class="tip" role="tooltip" hidden></div>
 
   <script src="app.js"></script>
 </body>

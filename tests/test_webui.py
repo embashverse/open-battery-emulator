@@ -101,7 +101,7 @@ def test_webui_disabled_starts_no_server_or_thread(tmp_path, monkeypatch):
 
 
 def test_engine_gives_the_webui_only_a_handle(tmp_path, monkeypatch):
-    """Checks REQ-34: webui.start() gets an EngineHandle with exactly two
+    """Checks REQ-34: webui.start() gets an EngineHandle with exactly three
     functions, never the Engine, and the state it reads is a copy."""
     received = []
     fake = types.ModuleType("webui")
@@ -115,7 +115,11 @@ def test_engine_gives_the_webui_only_a_handle(tmp_path, monkeypatch):
 
     assert isinstance(handle, EngineHandle)
     assert not isinstance(handle, Engine)
-    assert [f.name for f in fields(handle)] == ["read_state", "send_command"]
+    assert [f.name for f in fields(handle)] == [
+        "read_state",
+        "send_command",
+        "read_config",
+    ]
     state = handle.read_state()
     state["result"]["soc_pct"] = -1  # changing the copy must not reach the engine
     state["sources"].append("other")
@@ -255,6 +259,164 @@ def test_source_that_cannot_provide_current_returns_400(tmp_path, monkeypatch):
         assert "source 'listener'" in answer["error"]
         assert "available: simulated" in answer["error"]
         assert get_json(engine, "/api/state")["sources"] == ["simulated"]
+    finally:
+        stop_engine(engine)
+
+
+def test_state_lists_every_interface_with_availability_and_reason(
+    tmp_path, monkeypatch
+):
+    """Checks REQ-15, REQ-18: the state lists simulated and every interface in
+    config.yaml, in file order, each with whether it can provide current now
+    and why not, so the page can show them without knowing any by name."""
+    add_fake_interface(monkeypatch, "withinput", provides_current=True)
+    add_fake_interface(monkeypatch, "noinput", provides_current=False)
+    path = write_config(
+        tmp_path,
+        {
+            **WEBUI_ON,
+            "start.autostart": False,
+            "interfaces.withinput": {"enabled": True},
+            "interfaces.noinput": {"enabled": True},
+            "interfaces.off": {"enabled": False},  # no folder: never loaded
+        },
+    )
+    engine = start_engine(path)
+    try:
+        assert get_json(engine, "/api/state")["source_options"] == [
+            {"name": "simulated", "available": True, "reason": None},
+            {"name": "withinput", "available": False, "reason": "starts at Play"},
+            {"name": "noinput", "available": False, "reason": "starts at Play"},
+            {"name": "off", "available": False, "reason": "disabled in Config"},
+        ]
+
+        assert post(engine, {"command": "play", "value": None})[0] == 200
+        step(engine)
+        state = get_json(engine, "/api/state")
+
+        assert state["source_options"] == [
+            {"name": "simulated", "available": True, "reason": None},
+            {"name": "withinput", "available": True, "reason": None},
+            {"name": "noinput", "available": False, "reason": "has no current input"},
+            {"name": "off", "available": False, "reason": "disabled in Config"},
+        ]
+        assert state["sources"] == ["simulated", "withinput"]
+        # Used by the page for the Timeout tip and the cell grid colours.
+        assert state["timeout_ms"] == 500
+        assert (state["cell_v_min"], state["cell_v_max"]) == (2.5, 3.65)
+    finally:
+        stop_engine(engine)
+
+
+def test_state_has_the_soc_of_every_cell(tmp_path):
+    """Checks REQ-15: the state has each cell's SOC, module by module and
+    string by string, in the same shape as the cell voltages, for the cell
+    tooltip on the page."""
+    path = write_config(
+        tmp_path,
+        {
+            **WEBUI_ON,
+            "pack": {
+                "cells_per_module": 3,
+                "modules_in_series": 2,
+                "strings_in_parallel": 2,
+            },
+            "variation.soc_pct": 5,  # every cell gets its own SOC
+        },
+    )
+    engine = start_engine(path)
+    try:
+        for _ in range(3):
+            step(engine)
+        state = get_json(engine, "/api/state")
+
+        expected = [
+            [cell.soc_pct for cell in module.cells]
+            for string in engine.pack.strings
+            for module in string.modules
+        ]
+        got = [soc for module in state["module_cell_socs"] for soc in module]
+        want = [soc for module in expected for soc in module]
+        assert got == pytest.approx(want)
+        assert len(set(want)) == 12  # really one value per cell
+        voltages = state["result"]["module_cell_voltages"]
+        assert [len(m) for m in state["module_cell_socs"]] == [len(m) for m in voltages]
+    finally:
+        stop_engine(engine)
+
+
+def test_state_has_the_pack_capacity(tmp_path):
+    """Checks REQ-15: the state has the pack capacity in Ah (strings x the
+    capacity in cell.csv), for the time to empty or full on the page. None
+    before the first Play."""
+    path = write_config(
+        tmp_path,
+        {
+            **WEBUI_ON,
+            "pack": {
+                "cells_per_module": 2,
+                "modules_in_series": 1,
+                "strings_in_parallel": 2,
+            },
+            "start.autostart": False,
+        },
+    )
+    engine = start_engine(path)
+    try:
+        assert get_json(engine, "/api/state")["capacity_ah"] is None
+        assert post(engine, {"command": "play", "value": None})[0] == 200
+        step(engine)
+        state = get_json(engine, "/api/state")
+        assert state["capacity_ah"] == pytest.approx(2 * 100)  # test battery: 100 Ah
+    finally:
+        stop_engine(engine)
+
+
+# --- Config tab ---------------------------------------------------------------
+
+
+def test_config_form_and_save_through_the_api(tmp_path):
+    """Checks REQ-16, REQ-34: GET /api/config gives the form built from
+    config.yaml; a Save posted as a command is applied by the engine at its
+    next pass, and its result shows up in /api/state under its id."""
+    path = write_config(tmp_path, {**WEBUI_ON, "start.autostart": False})
+    engine = start_engine(path)
+    try:
+        form = get_json(engine, "/api/config")
+        paths = [field["path"] for field in form["fields"]]
+        assert "pack.cells_per_module" in paths
+        assert [b["name"] for b in form["batteries"]] == ["test"]
+        assert form["restart_needed"] == ["webui.host", "webui.port"]
+
+        status, answer = post(
+            engine,
+            {
+                "command": "save_config",
+                "value": {"version": form["version"], "changes": {"start.soc": 30}},
+            },
+        )
+        assert status == 200
+        assert "soc: 50" in path.read_text()  # not yet: the engine applies it
+
+        step(engine)
+
+        actions = get_json(engine, "/api/state")["actions"]
+        assert [a["id"] for a in actions if a["ok"]] == [answer["id"]]
+        assert "soc: 30" in path.read_text()
+        assert get_json(engine, "/api/config")["version"] != form["version"]
+    finally:
+        stop_engine(engine)
+
+
+def test_live_commands_are_refused_while_stopped(tmp_path):
+    """Checks REQ-36: Set SOC and the other live controls need RUNNING."""
+    engine = start_engine(
+        write_config(tmp_path, {**WEBUI_ON, "start.autostart": False})
+    )
+    try:
+        status, answer = post(engine, {"command": "set_soc", "value": 50})
+        assert status == 400
+        assert "only while RUNNING" in answer["error"]
     finally:
         stop_engine(engine)
 

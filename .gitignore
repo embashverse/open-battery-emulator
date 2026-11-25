@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .claude/settings.local.json
+# local test configs, like config_web.yaml
+config_*.yaml

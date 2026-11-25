@@ -22,6 +22,7 @@ from emulator.cell import (
     cell_voltage,
     current_limits,
     load_battery,
+    lookup,
     open_circuit_voltage,
     update_cell,
 )
@@ -33,6 +34,10 @@ CHARGING = "CHARGING"
 DISCHARGING = "DISCHARGING"
 FULL = "FULL"
 EMPTY = "EMPTY"
+
+# Where the nominal cell voltage is read from the discharge OCV table.
+NOMINAL_SOC_PCT = 50
+NOMINAL_TEMP_C = 25
 
 
 # --- 2. Data shapes -----------------------------------------------------------
@@ -125,6 +130,14 @@ class PackInfo:
     max_discharge_a: float  # P x the highest value in limit_discharge.csv
 
 
+@dataclass
+class BatterySummary:
+    """Two numbers per battery type, for the pack summary in the web UI."""
+
+    capacity_ah: float  # from cell.csv
+    nominal_v: float  # discharge OCV at NOMINAL_SOC_PCT and NOMINAL_TEMP_C
+
+
 # --- 3. Building the pack (once, at start) ------------------------------------
 
 
@@ -173,8 +186,26 @@ def make_varied_cell(
     )
 
 
+def battery_summary(battery_folder: Path) -> BatterySummary:
+    """Capacity and nominal cell voltage of a battery folder.
+
+    Nominal voltage is taken as the discharge OCV at 50 % SOC and 25 degC.
+    """
+    battery = load_battery(battery_folder)
+    return BatterySummary(
+        capacity_ah=battery.capacity_ah,
+        nominal_v=lookup(battery.ocv_discharge, NOMINAL_SOC_PCT, NOMINAL_TEMP_C),
+    )
+
+
 def clamp_soc(soc_pct: float) -> float:
     return max(0.0, min(100.0, soc_pct))
+
+
+def cell_voltage_range(pack: Pack) -> tuple[float, float]:
+    """v_min and v_max of one cell, from cell.csv. The web UI marks a cell
+    at or beyond either one."""
+    return pack.battery.v_min, pack.battery.v_max
 
 
 def pack_info(pack: Pack) -> PackInfo:
@@ -376,6 +407,22 @@ def make_result(
 def cells_of_pack(pack: Pack) -> list[Cell]:
     """All cells of the pack, string by string."""
     return [cell for string in pack.strings for cell in cells_of_string(string)]
+
+
+def module_cell_socs(pack: Pack) -> list[list[float]]:
+    """SOC of every cell, one list per module, numbered string by string:
+    the same shape as PackResult.module_cell_voltages."""
+    return [
+        [cell.soc_pct for cell in module.cells]
+        for string in pack.strings
+        for module in string.modules
+    ]
+
+
+def pack_capacity_ah(pack: Pack) -> float:
+    """Nominal pack capacity: strings in parallel x the capacity in cell.csv.
+    The same number the pack summary in the web UI shows."""
+    return len(pack.strings) * pack.battery.capacity_ah
 
 
 def average_soc(pack: Pack) -> float:

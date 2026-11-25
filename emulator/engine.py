@@ -1,7 +1,13 @@
-"""High level: config, current source and time.
+"""High level: current source, time and run state.
 
-Reads config.yaml, picks the current (from an interface or simulated), runs the
-100 ms loop and hands each result to the enabled interfaces. Uses only pack.py.
+Picks the current (from an interface or simulated), runs the 100 ms loop and
+hands each result to the enabled interfaces. Everything about config.yaml
+(reading, checking, saving) is in config.py. Uses only config.py and pack.py.
+
+The emulator is STOPPED (no ticks, interfaces closed, settings editable) or
+RUNNING (ticks and frames, settings locked). Play builds the pack and starts
+the interfaces from the saved config.yaml; Stop closes the interfaces. The
+loop and the web UI keep running in both states (REQ-36).
 
 When webui.enabled is true it also starts the web UI (loaded by name, like the
 interfaces) and gives it a small handle to read the state and queue commands.
@@ -21,20 +27,34 @@ import math
 import queue
 import signal
 import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import ModuleType
 
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
-
+from emulator.config import (
+    RESTART_NEEDED,
+    ConfigError,
+    EngineConfig,
+    apply_changes,
+    check_autostart,
+    check_config,
+    check_speed,
+    check_webui,
+    list_interfaces,
+    read_config_file,
+    read_form,
+    write_config_file,
+)
 from emulator.pack import (
     Pack,
     PackResult,
-    PackSettings,
     build_pack,
+    cell_voltage_range,
+    module_cell_socs,
+    pack_capacity_ah,
     pack_info,
     set_hold_soc,
     set_soc,
@@ -47,17 +67,18 @@ TICK_S = 0.1  # emulated time per step; the speed factor never changes this
 TICKS_PER_SECOND = 10  # 1 s / TICK_S, used to print the status line every N s
 CONTRACT = ("start", "send", "read_current", "stop")  # interface functions
 WEBUI_CONTRACT = ("start", "stop")  # web UI functions
-WEBUI_DEFAULT_HOST = "0.0.0.0"  # reachable from other devices on the network
-WEBUI_DEFAULT_PORT = 8080
-# Commands the web UI can queue (REQ-21, REQ-34), checked in check_command().
-COMMANDS = ("set_source", "set_simulated_current", "set_soc", "hold_soc")
+# Run states (REQ-36).
+STOPPED = "STOPPED"
+RUNNING = "RUNNING"
+# Commands the web UI can queue, checked in check_command(). Play, Stop and
+# Save work while STOPPED (Save only then); the others need RUNNING.
+RUN_COMMANDS = ("play", "stop", "save_config")
+LIVE_COMMANDS = ("set_source", "set_simulated_current", "set_soc", "hold_soc")
+COMMANDS = RUN_COMMANDS + LIVE_COMMANDS
+ACTIONS_KEPT = 10  # results of the last commands, shown by the page
 
 
 # --- 2. Data shapes -----------------------------------------------------------
-
-
-class ConfigError(ValueError):
-    """A bad value in config.yaml. The message starts with the setting name."""
 
 
 class CommandError(ValueError):
@@ -65,29 +86,19 @@ class CommandError(ValueError):
 
 
 @dataclass
-class EngineConfig:
-    """The checked values from config.yaml that the engine uses."""
-
-    battery_folder: Path
-    pack_settings: PackSettings
-    current_source: str  # "simulated" or the name of an enabled interface
-    simulated_a: float
-    timeout_ms: float  # interface current timeout (REQ-10)
-    interfaces: list[tuple[str, dict]]  # (name, settings) of each enabled one
-    webui_enabled: bool = False
-    webui_host: str = WEBUI_DEFAULT_HOST
-    webui_port: int = WEBUI_DEFAULT_PORT
-
-
-@dataclass
 class Engine:
-    config: EngineConfig
-    pack: Pack
+    config_path: Path
+    speed: float = 1.0
+    run_state: str = STOPPED
+    error: str | None = None  # why the last Play failed, None after a good one
+    # Set by every Play from the saved config.yaml. None before the first one.
+    config: EngineConfig | None = None
+    pack: Pack | None = None
     interfaces: list[ModuleType] = field(default_factory=list)  # started ones
-    tick_count: int = 0
+    tick_count: int = 0  # since the last Play
     last_result: PackResult | None = None
-    # Live settings: they start from config.yaml and the web UI can change them
-    # while running. They are never written back to config.yaml.
+    # Live settings: they start from config.yaml at Play and the web UI can
+    # change them while running. They are never written back to config.yaml.
     current_source: str = "simulated"
     simulated_a: float = 0.0
     # Current from an interface (REQ-08, REQ-10). Unused when simulated.
@@ -95,249 +106,80 @@ class Engine:
     current_sources: dict[str, ModuleType] = field(default_factory=dict)  # can provide
     command_a: float = 0.0  # the last current command received
     command_tick: int | None = None  # tick_count when it arrived; None = none yet
-    # Web UI (REQ-15, REQ-34). The web thread only puts into `commands` and
-    # reads `live_state`; everything else is used by the engine thread only.
+    # (name, enabled) of every section under interfaces: in config.yaml, for
+    # the source list on the page. Read at start, at every Play and at Save.
+    interface_list: list[tuple[str, bool]] = field(default_factory=list)
+    # Web UI (REQ-15, REQ-34). The web thread only puts into `commands` (taking
+    # an id under `id_lock`) and reads `live_state`; everything else is used by
+    # the engine thread only.
     commands: queue.Queue = field(default_factory=queue.Queue)
+    id_lock: threading.Lock = field(default_factory=threading.Lock)
+    next_command_id: int = 1
+    actions: list[dict] = field(default_factory=list)  # results of past commands
     live_state: dict | None = None  # rebuilt every tick, never changed afterwards
+    # webui settings are read once at program start: changing host or port
+    # needs a restart.
+    webui_enabled: bool = False
+    webui_host: str = ""
+    webui_port_setting: int = 0
     webui: ModuleType | None = None  # the started web UI, None when disabled
     webui_port: int | None = None  # the port really used
 
 
 @dataclass
 class EngineHandle:
-    """All the web UI gets from the engine (REQ-34): two functions, no Engine.
+    """All the web UI gets from the engine (REQ-34): three functions, no Engine.
 
-    read_state() returns a copy of the latest result and live settings.
-    send_command(command) checks one command and queues it for the next tick,
-    or raises CommandError.
+    read_state() returns a copy of the latest result, live settings and run
+    state.
+    send_command(command) checks one command, queues it for the next tick and
+    returns its id, or raises CommandError. The result shows up in
+    read_state()["actions"] under that id.
+    read_config() returns the settings form built from config.yaml (only
+    reads the file).
     """
 
     read_state: Callable[[], dict]
-    send_command: Callable[[dict], None]
+    send_command: Callable[[dict], int]
+    read_config: Callable[[], dict]
 
 
-# --- 3. Reading config.yaml ---------------------------------------------------
-
-
-def read_config_file(path: Path) -> dict:
-    """Load config.yaml as nested dictionaries.
-
-    Round trip mode ("rt") is the mode that keeps comments, which the web UI
-    needs in M5 when it saves the file. Reading uses the same mode.
-    """
-    if not path.is_file():
-        raise ConfigError(f"config file not found: {path}")
-    try:
-        raw = YAML(typ="rt").load(path.read_text())
-    except YAMLError as error:
-        raise ConfigError(f"{path} is not valid YAML: {error}") from None
-    if not isinstance(raw, dict):
-        raise ConfigError(f"{path} must contain settings as 'name: value' lines")
-    return raw
-
-
-# --- 4. Checking config values ------------------------------------------------
-# Every error names the setting, for example "pack.cells_per_module".
-
-
-def get_value(raw: dict, section: str, key: str):
-    """The value of section.key, or a clear error if it is missing."""
-    values = raw.get(section)
-    if not isinstance(values, dict):
-        raise ConfigError(f"{section} is missing")
-    if key not in values or values[key] is None:
-        raise ConfigError(f"{section}.{key} is missing")
-    return values[key]
-
-
-def get_whole_number(raw: dict, section: str, key: str, minimum: int | None = None):
-    value = get_value(raw, section, key)
-    # bool counts as an int in Python, so "true" would pass as 1 without this.
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError(f"{section}.{key} must be a whole number")
-    if minimum is not None and value < minimum:
-        raise ConfigError(f"{section}.{key} must be at least {minimum}")
-    return int(value)
-
-
-def get_number(
-    raw: dict,
-    section: str,
-    key: str,
-    minimum: float | None = None,
-    maximum: float | None = None,
-    above: float | None = None,
-) -> float:
-    """A number, optionally at least `minimum`, at most `maximum`, or above `above`."""
-    value = get_value(raw, section, key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"{section}.{key} must be a number")
-    name = f"{section}.{key}"
-    if minimum is not None and maximum is not None:
-        if not minimum <= value <= maximum:
-            raise ConfigError(f"{name} must be between {minimum} and {maximum}")
-    elif minimum is not None and value < minimum:
-        raise ConfigError(f"{name} must be at least {minimum}")
-    if above is not None and value <= above:
-        raise ConfigError(f"{name} must be greater than {above}")
-    return float(value)
-
-
-def check_battery(raw: dict, config_folder: Path) -> Path:
-    """The battery folder, found in batteries/ next to config.yaml."""
-    name = raw.get("battery")
-    if name is None:
-        raise ConfigError("battery is missing")
-    if not isinstance(name, str):
-        raise ConfigError("battery must be the name of a folder in batteries/")
-    folder = config_folder / "batteries" / name
-    if not folder.is_dir():
-        raise ConfigError(f"battery: no folder batteries/{name}")
-    return folder
-
-
-def check_current_source(raw: dict, enabled_names: list[str]) -> str:
-    """REQ-08: "simulated", or the name of an interface with enabled: true."""
-    source = get_value(raw, "current", "source")
-    if source == "simulated" or source in enabled_names:
-        return source
-    enabled = ", ".join(enabled_names) or "none"
-    raise ConfigError(
-        f"current.source '{source}' must be 'simulated' or the name of an "
-        f"enabled interface (enabled: {enabled})"
-    )
-
-
-def check_interfaces(raw: dict, config_folder: Path) -> list[tuple[str, dict]]:
-    """Name and settings of every interface with enabled: true.
-
-    The engine does not know what any setting means. It only makes relative
-    file paths full (see resolve_paths), so interfaces get usable paths.
-    """
-    sections = raw.get("interfaces")
-    if sections is None:
-        return []  # no interfaces section, or every interface commented out
-    if not isinstance(sections, dict):
-        raise ConfigError("interfaces must contain one section per interface")
-
-    enabled = []
-    for name, settings in sections.items():
-        if not isinstance(name, str) or not name.isidentifier():
-            raise ConfigError(f"interfaces.{name}: not a valid interface name")
-        if not isinstance(settings, dict):
-            raise ConfigError(f"interfaces.{name} must contain its settings")
-        switch = settings.get("enabled")
-        if switch is None:
-            raise ConfigError(f"interfaces.{name}.enabled is missing")
-        if not isinstance(switch, bool):
-            raise ConfigError(f"interfaces.{name}.enabled must be true or false")
-        if switch:
-            enabled.append((name, resolve_paths(settings, config_folder)))
-    return enabled
-
-
-def resolve_paths(settings: dict, config_folder: Path) -> dict:
-    """A copy of settings where every relative string that names an existing
-    file next to config.yaml is replaced by its full path. Nested sections are
-    handled the same way. Everything else is copied unchanged."""
-    resolved = {}
-    for key, value in settings.items():
-        if isinstance(value, dict):
-            value = resolve_paths(value, config_folder)
-        elif isinstance(value, str) and not Path(value).is_absolute():
-            candidate = config_folder / value
-            if candidate.is_file():
-                value = str(candidate.resolve())
-        resolved[key] = value
-    return resolved
-
-
-def check_webui(raw: dict) -> tuple[bool, str, int]:
-    """REQ-15: enabled, host and port of the web UI.
-
-    No webui section means it is off. host and port have defaults. Port 0
-    means "any free port" (used by the tests).
-    """
-    section = raw.get("webui")
-    if section is None:
-        return False, WEBUI_DEFAULT_HOST, WEBUI_DEFAULT_PORT
-    if not isinstance(section, dict):
-        raise ConfigError("webui must contain its settings")
-
-    enabled = section.get("enabled", False)
-    if not isinstance(enabled, bool):
-        raise ConfigError("webui.enabled must be true or false")
-
-    host = section.get("host", WEBUI_DEFAULT_HOST)
-    if not isinstance(host, str) or not host:
-        raise ConfigError("webui.host must be an address like 0.0.0.0 or 127.0.0.1")
-
-    port = section.get("port", WEBUI_DEFAULT_PORT)
-    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
-        raise ConfigError("webui.port must be a whole number from 0 to 65535")
-    return enabled, host, int(port)
-
-
-def check_config(raw: dict, config_folder: Path) -> EngineConfig:
-    """Check every setting the engine uses and collect them in one place."""
-    battery_folder = check_battery(raw, config_folder)
-
-    pack_settings = PackSettings(
-        cells_per_module=get_whole_number(raw, "pack", "cells_per_module", minimum=1),
-        modules_in_series=get_whole_number(raw, "pack", "modules_in_series", minimum=1),
-        strings_in_parallel=get_whole_number(
-            raw, "pack", "strings_in_parallel", minimum=1
-        ),
-        start_soc_pct=get_number(raw, "start", "soc", minimum=0, maximum=100),
-        temperature_c=get_number(raw, "start", "temperature_c"),
-        capacity_variation_pct=get_number(raw, "variation", "capacity_pct", minimum=0),
-        r0_variation_pct=get_number(raw, "variation", "r0_pct", minimum=0),
-        soc_variation_pct=get_number(raw, "variation", "soc_pct", minimum=0),
-        seed=get_whole_number(raw, "variation", "seed"),
-        deadband_a=get_number(raw, "current", "deadband_a", minimum=0),
-    )
-
-    # Interfaces first: current.source may name one of them.
-    interfaces = check_interfaces(raw, config_folder)
-    enabled_names = [name for name, _ in interfaces]
-    webui_enabled, webui_host, webui_port = check_webui(raw)
-
-    return EngineConfig(
-        battery_folder=battery_folder,
-        pack_settings=pack_settings,
-        current_source=check_current_source(raw, enabled_names),
-        simulated_a=get_number(raw, "current", "simulated_a"),
-        timeout_ms=get_number(raw, "current", "timeout_ms", above=0),
-        interfaces=interfaces,
-        webui_enabled=webui_enabled,
-        webui_host=webui_host,
-        webui_port=webui_port,
-    )
-
-
-# --- 5. Building the engine (once, at start) ----------------------------------
+# --- 3. Starting the program (once) -------------------------------------------
 
 
 def start_engine(config_path: Path, speed: float = 1.0) -> Engine:
-    """Read and check config.yaml, build the pack, start the interfaces, then
-    the web UI if enabled (it needs to know which sources can provide current).
+    """Read the web UI settings and autostart, Play if autostart is true, then
+    start the web UI if enabled.
 
-    Every check runs before any port is opened. If the web UI cannot start,
-    the interfaces are stopped again.
+    If Play fails at boot and the web UI is on, the error is kept and the
+    emulator stays STOPPED, so it can be fixed from the Config tab. With the
+    web UI off it is raised, so the program exits with the error.
     """
     config_path = Path(config_path)
     raw = read_config_file(config_path)
-    config = check_config(raw, config_path.parent)
-    check_speed(config.interfaces, speed)
-    modules = [load_interface(name) for name, _ in config.interfaces]
-    pack = build_pack(config.battery_folder, config.pack_settings)
+    webui_enabled, webui_host, webui_port = check_webui(raw)
+    autostart = check_autostart(raw)
     engine = Engine(
-        config=config,
-        pack=pack,
-        current_source=config.current_source,
-        simulated_a=config.simulated_a,
+        config_path=config_path,
+        speed=speed,
+        webui_enabled=webui_enabled,
+        webui_host=webui_host,
+        webui_port_setting=webui_port,
+        interface_list=list_interfaces(raw),
     )
-    start_interfaces(engine, modules)
+
+    if autostart:
+        try:
+            play(engine)
+        except (ValueError, OSError) as error:
+            if not webui_enabled:
+                raise
+            engine.error = str(error)
+            print(f"Config error: {error}", file=sys.stderr)
+            print("Stays STOPPED. Fix it in the web UI Config tab, then press Play.")
+    else:
+        print("STOPPED (start.autostart is false). Press Play in the web UI.")
+
     engine.live_state = make_live_state(engine, None)  # before the first tick
     try:
         start_webui(engine)
@@ -353,19 +195,87 @@ def stop_engine(engine: Engine) -> None:
     stop_interfaces(engine)
 
 
+# --- 4. Play and Stop (REQ-36) ------------------------------------------------
+
+
+def prepare_run(raw: dict, config_folder: Path, speed: float):
+    """Every check Play makes before any port is opened: the settings, the
+    speed, each interface's contract and the battery files (by building the
+    pack). Save calls exactly this too (REQ-16).
+
+    Returns (config, interface modules, pack).
+    """
+    config = check_config(raw, config_folder)
+    check_speed(config.interfaces, speed)
+    modules = [load_interface(name) for name, _ in config.interfaces]
+    pack = build_pack(config.battery_folder, config.pack_settings)
+    return config, modules, pack
+
+
+def play(engine: Engine) -> None:
+    """Build a new pack and start the interfaces from the saved config.yaml.
+
+    Live settings and the tick count start over. On any error the emulator
+    stays STOPPED and the error is raised (interfaces already started are
+    stopped again in start_interfaces).
+    """
+    if engine.run_state == RUNNING:
+        raise CommandError("play: already RUNNING")
+    raw = read_config_file(engine.config_path)
+    engine.interface_list = list_interfaces(raw)  # even if a check below fails
+    config, modules, pack = prepare_run(raw, engine.config_path.parent, engine.speed)
+
+    engine.config = config
+    engine.pack = pack
+    engine.tick_count = 0
+    engine.last_result = None
+    engine.current_source = config.current_source
+    engine.simulated_a = config.simulated_a
+    engine.command_a = 0.0
+    engine.command_tick = None
+    start_interfaces(engine, modules)
+
+    engine.run_state = RUNNING
+    engine.error = None
+    print("RUNNING")
+
+
+def stop(engine: Engine) -> None:
+    """Close every interface, so no frames are sent. The pack and its last
+    result stay, so the page can still show them."""
+    if engine.run_state == STOPPED:
+        raise CommandError("stop: already STOPPED")
+    stop_interfaces(engine)
+    engine.run_state = STOPPED
+    print("STOPPED. Press Play in the web UI to start again.")
+
+
+# --- 5. Saving settings (REQ-16, REQ-17) --------------------------------------
+
+
+def save_settings(engine: Engine, value: dict) -> str:
+    """Apply the page's changes to config.yaml, check them with the same
+    checks Play uses, then write the file. Only while STOPPED. Returns the
+    message for the page."""
+    if engine.run_state == RUNNING:
+        raise CommandError("save_config: press Stop before saving settings")
+    document = apply_changes(engine.config_path, value["version"], value["changes"])
+    prepare_run(document, engine.config_path.parent, engine.speed)
+    write_config_file(engine.config_path, document)
+    engine.interface_list = list_interfaces(document)
+
+    message = "Saved to config.yaml. Press Play to use the new settings."
+    if any(path in RESTART_NEEDED for path in value["changes"]):
+        message += (
+            " webui.host and webui.port take effect after restarting the program."
+        )
+    return message
+
+
 # --- 6. Interfaces ------------------------------------------------------------
 # The engine finds an interface only by its name under interfaces: in
 # config.yaml and calls only the contract functions (PROJECT.md). It never
 # knows what CAN or UART is (REQ-14).
-
-
-def check_speed(interfaces: list[tuple[str, dict]], speed: float) -> None:
-    """REQ-26: with a device on the other end, time must be real time."""
-    if interfaces and speed != 1:
-        names = ", ".join(name for name, _ in interfaces)
-        raise ConfigError(
-            f"--speed must be 1 when an interface is enabled (enabled: {names})"
-        )
 
 
 def load_interface(name: str) -> ModuleType:
@@ -432,37 +342,42 @@ def stop_interfaces(engine: Engine) -> None:
 # --- 7. Web UI ----------------------------------------------------------------
 # Loaded by name with importlib, only when webui.enabled is true, so the
 # emulator never needs webui/ to run (REQ-15). It gets an EngineHandle with
-# two functions and never the Engine, so the web thread cannot change the
+# three functions and never the Engine, so the web thread cannot change the
 # pack (REQ-34).
 
 
 def start_webui(engine: Engine) -> None:
     """Import webui, check its contract and start it with a handle."""
-    config = engine.config
-    if not config.webui_enabled:
+    if not engine.webui_enabled:
         return
     module = importlib.import_module("webui")
     for function in WEBUI_CONTRACT:
         if not callable(getattr(module, function, None)):
             raise ConfigError(f"webui: webui/__init__.py has no {function}()")
     engine.webui_port = module.start(
-        config.webui_host, config.webui_port, make_handle(engine)
+        engine.webui_host, engine.webui_port_setting, make_handle(engine)
     )
     engine.webui = module
-    print(f"Web UI on http://{config.webui_host}:{engine.webui_port}")
+    print(f"Web UI on http://{engine.webui_host}:{engine.webui_port}")
 
 
 def make_handle(engine: Engine) -> EngineHandle:
-    """The two functions the web UI may call. Both are safe from another thread:
-    one copies the latest published state, the other only puts into a queue."""
+    """The three functions the web UI may call. All are safe from another
+    thread: one copies the latest published state, one only puts into a
+    queue, one only reads config.yaml."""
 
     def read_state() -> dict:
         return copy.deepcopy(engine.live_state)
 
-    def send_command(command: dict) -> None:
-        queue_command(engine, command)
+    def send_command(command: dict) -> int:
+        return queue_command(engine, command)
 
-    return EngineHandle(read_state=read_state, send_command=send_command)
+    def read_config() -> dict:
+        return read_form(engine.config_path)
+
+    return EngineHandle(
+        read_state=read_state, send_command=send_command, read_config=read_config
+    )
 
 
 def stop_webui(engine: Engine) -> None:
@@ -473,7 +388,9 @@ def stop_webui(engine: Engine) -> None:
 
 # --- 8. Commands from the web UI ----------------------------------------------
 # Checked on the web thread as they arrive, so a bad one gets a clear answer
-# at once. Applied on the engine thread at the start of the next tick (REQ-34).
+# at once. The web thread only looks at the published live_state, never at
+# the engine's own fields. Applied on the engine thread at the start of the
+# next tick (REQ-34), and the result is kept in engine.actions for the page.
 
 
 def check_command(engine: Engine, command) -> dict:
@@ -485,10 +402,31 @@ def check_command(engine: Engine, command) -> dict:
         )
     name = command.get("command")
     value = command.get("value")
+    state = engine.live_state
+    running = state["run_state"] == RUNNING
 
-    if name == "set_source":
-        # current_sources is filled once at start and only read here.
-        available = ["simulated", *engine.current_sources]
+    if name not in COMMANDS:
+        raise CommandError(f"unknown command '{name}' (known: {', '.join(COMMANDS)})")
+    if name in LIVE_COMMANDS and not running:
+        raise CommandError(f"{name}: only while RUNNING, press Play first")
+
+    if name == "play" and running:
+        raise CommandError("play: already RUNNING")
+    elif name == "stop" and not running:
+        raise CommandError("stop: already STOPPED")
+    elif name == "save_config":
+        if running:
+            raise CommandError("save_config: press Stop before saving settings")
+        if (
+            not isinstance(value, dict)
+            or not isinstance(value.get("version"), str)
+            or not isinstance(value.get("changes"), dict)
+        ):
+            raise CommandError(
+                'save_config: value must be {"version": ..., "changes": {...}}'
+            )
+    elif name == "set_source":
+        available = state["sources"]
         if value not in available:
             raise CommandError(
                 f"source '{value}' must be 'simulated' or an interface that can "
@@ -500,11 +438,8 @@ def check_command(engine: Engine, command) -> dict:
         value = check_command_number(name, value)
         if not 0 <= value <= 100:
             raise CommandError(f"set_soc: SOC must be between 0 and 100, got {value}")
-    elif name == "hold_soc":
-        if not isinstance(value, bool):
-            raise CommandError("hold_soc: value must be true or false")
-    else:
-        raise CommandError(f"unknown command '{name}' (known: {', '.join(COMMANDS)})")
+    elif name == "hold_soc" and not isinstance(value, bool):
+        raise CommandError("hold_soc: value must be true or false")
     return {"command": name, "value": value}
 
 
@@ -517,27 +452,72 @@ def check_command_number(name: str, value) -> float:
     return float(value)
 
 
-def queue_command(engine: Engine, command) -> None:
-    """Web thread: check the command, then leave it for the engine thread."""
-    engine.commands.put(check_command(engine, command))
+def queue_command(engine: Engine, command) -> int:
+    """Web thread: check the command, give it an id, leave it for the engine
+    thread. Several browsers can send at once, hence the lock around the id."""
+    checked = check_command(engine, command)
+    with engine.id_lock:
+        checked["id"] = engine.next_command_id
+        engine.next_command_id += 1
+    engine.commands.put(checked)
+    return checked["id"]
 
 
 def apply_commands(engine: Engine) -> None:
-    """Engine thread: apply every queued command, oldest first."""
+    """Engine thread: apply every queued command, oldest first, and keep each
+    result for the page. A command that fails never stops the emulator."""
     while True:
         try:
             command = engine.commands.get_nowait()
         except queue.Empty:
             return
-        name, value = command["command"], command["value"]
-        if name == "set_source":
-            switch_source(engine, value)
-        elif name == "set_simulated_current":
-            engine.simulated_a = value
-        elif name == "set_soc":
-            set_soc(engine.pack, value)
-        elif name == "hold_soc":
-            set_hold_soc(engine.pack, value)
+        try:
+            message = apply_command(engine, command)
+            ok = True
+        except (ValueError, OSError) as error:
+            message = str(error)
+            ok = False
+            if command["command"] == "play":
+                engine.error = message
+        action = {
+            "id": command["id"],
+            "command": command["command"],
+            "ok": ok,
+            "message": message,
+        }
+        engine.actions.append(action)
+        engine.actions = engine.actions[-ACTIONS_KEPT:]
+
+
+def apply_command(engine: Engine, command: dict) -> str:
+    """Do one command. Returns a short message, or raises with the reason.
+
+    The run state is checked again here: it may have changed since the web
+    thread checked the command (for example Play queued twice).
+    """
+    name, value = command["command"], command["value"]
+    if name == "play":
+        play(engine)
+        return "RUNNING"
+    if name == "stop":
+        stop(engine)
+        return "STOPPED"
+    if name == "save_config":
+        return save_settings(engine, value)
+
+    if engine.run_state != RUNNING:
+        raise CommandError(f"{name}: only while RUNNING, press Play first")
+    if name == "set_source":
+        if value != "simulated" and value not in engine.current_sources:
+            raise CommandError(f"source '{value}' is not available any more")
+        switch_source(engine, value)
+    elif name == "set_simulated_current":
+        engine.simulated_a = value
+    elif name == "set_soc":
+        set_soc(engine.pack, value)
+    elif name == "hold_soc":
+        set_hold_soc(engine.pack, value)
+    return "applied"
 
 
 def switch_source(engine: Engine, source: str) -> None:
@@ -558,15 +538,21 @@ def switch_source(engine: Engine, source: str) -> None:
 # --- 9. One tick --------------------------------------------------------------
 
 
-def step(engine: Engine) -> PackResult:
-    """Run exactly one tick of TICK_S seconds. No sleeping, no printing.
+def step(engine: Engine) -> PackResult | None:
+    """One pass of the loop. No sleeping; prints only when Play or Stop
+    changes the run state.
 
-    First apply the commands the web UI queued since the last tick (REQ-34),
-    then pick the current (simulated or from an interface, with the timeout),
-    then move the pack. The deadband is applied afterwards in pack.py. Last,
-    publish a fresh live state for the web UI.
+    First apply the commands the web UI queued since the last pass (REQ-34).
+    While STOPPED that is all: no tick, None is returned. While RUNNING, pick
+    the current (simulated or from an interface, with the timeout) and move
+    the pack by TICK_S seconds. The deadband is applied afterwards in pack.py.
+    Last, publish a fresh live state for the web UI.
     """
     apply_commands(engine)
+    if engine.run_state != RUNNING:
+        engine.live_state = make_live_state(engine, engine.last_result)
+        return None
+
     current_a, timed_out = pick_current(engine)
     result = tick(engine.pack, current_a, TICK_S)
     result.current_timeout = timed_out  # pack.py knows nothing about sources
@@ -577,19 +563,55 @@ def step(engine: Engine) -> PackResult:
 
 
 def make_live_state(engine: Engine, result: PackResult | None) -> dict:
-    """The latest result and live settings as plain values (ready for JSON).
+    """The latest result, live settings and run state as plain values (ready
+    for JSON).
 
-    A new dict every tick, never changed after it is published: the web
+    A new dict every pass, never changed after it is published: the web
     thread reads it while the engine thread is already building the next one.
     """
+    if engine.pack is None:
+        cell_v_min, cell_v_max = None, None
+        cell_socs = None
+        capacity_ah = None
+    else:
+        cell_v_min, cell_v_max = cell_voltage_range(engine.pack)
+        cell_socs = module_cell_socs(engine.pack)
+        capacity_ah = pack_capacity_ah(engine.pack)
     return {
+        "run_state": engine.run_state,
+        "error": engine.error,
+        "actions": list(engine.actions),
         "result": None if result is None else asdict(result),
         "elapsed_s": elapsed_s(engine),
         "current_source": engine.current_source,
         "simulated_a": engine.simulated_a,
-        "hold_soc": engine.pack.hold_soc,
+        "hold_soc": engine.pack is not None and engine.pack.hold_soc,
         "sources": ["simulated", *engine.current_sources],
+        "source_options": source_options(engine),
+        "timeout_ms": None if engine.config is None else engine.config.timeout_ms,
+        "cell_v_min": cell_v_min,
+        "cell_v_max": cell_v_max,
+        "module_cell_socs": cell_socs,  # same shape as result.module_cell_voltages
+        "capacity_ah": capacity_ah,  # for the time to empty or full on the page
     }
+
+
+def source_options(engine: Engine) -> list[dict]:
+    """Simulated, then every interface in config.yaml, each with whether it
+    can be the current source right now and, if not, why. The page shows
+    these as they are, so it needs no interface names of its own."""
+    options = [{"name": "simulated", "available": True, "reason": None}]
+    for name, enabled in engine.interface_list:
+        if not enabled:
+            reason = "disabled in Config"
+        elif engine.run_state != RUNNING:
+            reason = "starts at Play"
+        elif name not in engine.current_sources:
+            reason = "has no current input"
+        else:
+            reason = None
+        options.append({"name": name, "available": reason is None, "reason": reason})
+    return options
 
 
 def pick_current(engine: Engine) -> tuple[float, bool]:
@@ -622,7 +644,7 @@ def pick_current(engine: Engine) -> tuple[float, bool]:
 
 
 def elapsed_s(engine: Engine) -> float:
-    """Emulated time so far. Depends only on the number of ticks."""
+    """Emulated time since the last Play. Depends only on the number of ticks."""
     return engine.tick_count * TICK_S
 
 
@@ -676,7 +698,9 @@ def run(
     Each deadline is counted from the start time, not from "now", so small
     delays never add up (no drift). If a tick is late, the next one runs at
     once to catch up. Speed only changes how long the loop sleeps; every step
-    still moves the pack by TICK_S of emulated time.
+    still moves the pack by TICK_S of emulated time. While STOPPED the loop
+    keeps its pace (so queued commands like Play are picked up) but no tick
+    runs; max_ticks counts loop passes.
 
     A status line is printed every status_every_s seconds of emulated time.
     max_ticks, clock, sleep and output let tests run the loop without waiting.
@@ -690,10 +714,11 @@ def run(
         result = step(engine)
         ticks_done += 1
 
-        send_to_interfaces(engine, result)
-
-        if engine.tick_count % ticks_per_status == 0:
-            output(status_line(engine, result))
+        # STOPPED: no tick happened, so nothing is sent or printed (REQ-36).
+        if result is not None:
+            send_to_interfaces(engine, result)
+            if engine.tick_count % ticks_per_status == 0:
+                output(status_line(engine, result))
 
         next_deadline = start_time + ticks_done * real_tick_s
         sleep(max(0.0, next_deadline - clock()))

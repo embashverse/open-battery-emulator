@@ -8,6 +8,7 @@ pack:
 start:
   soc: 80                  # percent
   temperature_c: 25
+  autostart: true          # false = start STOPPED, press Play in the web UI
 
 variation:                 # natural spread between cells, all 0 = identical cells
   capacity_pct: 2          # each cell's capacity within +-2 % of the battery file

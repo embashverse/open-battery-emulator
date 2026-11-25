@@ -5,7 +5,8 @@ real battery, and BMS style data goes out on CAN. Signals only, no real power.
 
 > Early development. The emulator runs in the terminal, sends pack data on CAN and takes
 > its current either simulated or from a current command on CAN. An optional web page
-> shows live values and has test controls.
+> shows live values, has test controls, a Play / Stop button and a Config tab to edit
+> `config.yaml`.
 
 ## What it does
 
@@ -22,7 +23,7 @@ real battery, and BMS style data goes out on CAN. Signals only, no real power.
 - `batteries/` battery types
 - `emulator/` the model: `cell.py`, `pack.py`, `engine.py`
 - `interfaces/` CAN today, more later
-- `webui/` optional live view and test controls in the browser
+- `webui/` optional live view, Play / Stop and settings in the browser
 
 Requirements, design and plan: [PROJECT.md](PROJECT.md)
 
@@ -123,10 +124,22 @@ bad setting in `config.yaml` stops it at start with a message naming the setting
 
 ### Web UI
 
-An optional page in the browser shows the live values (state, current, voltage, SOC,
-lowest and highest cell, limits, flags), a coloured grid of every cell voltage, and
-controls for the current source, the simulated current, Set SOC and Hold SOC. It needs
-no internet: everything comes from the emulator itself.
+An optional page in the browser with two tabs. Errors and confirmations appear next to
+the button that caused them: under the run button (Live) or in the Save card (Config). It
+needs no internet: everything comes from the emulator itself.
+
+- **Live:** SOC with the time to empty or full, voltage, current, state, the lowest and
+  highest cell, the spread, limits and flags (hover or tap a symbol or flag for an
+  explanation), and a grid of every cell with the strings side by side (green = normal,
+  amber = far from the pack average, red = at its minimum or maximum voltage or the cell
+  that caused FULL or EMPTY; hover or tap for its voltage and SOC). On the right: controls
+  for the current source, the simulated current (Discharge or Charge and the amps), Set
+  SOC and Hold SOC, the run time, and one run button that shows whether the emulator is
+  running and says what pressing it does (Play or Stop).
+- **Config:** every setting in `config.yaml`, grouped: battery (a list of the folders in
+  `batteries/`), pack (with a summary like `96s2p · 316 V nominal · 200 Ah`), start,
+  cell variation, current, interfaces and web UI. Every section under `interfaces:`
+  shows up here on its own. The Save card shows how many changes are not saved yet.
 
 Turn it on in `config.yaml` and start (or restart) the emulator:
 
@@ -143,11 +156,45 @@ The emulator prints `Web UI on http://0.0.0.0:8080`. Then open:
 - on the Pi, from a laptop or phone on the same network: `http://battery.local:8080`
   (the hostname you gave the Pi), or `http://<the Pi's IP address>:8080`
 
-Changes made on the page are live only: they are **not** saved to `config.yaml`, so a
-restart goes back to the file's values. (Saving settings from the page comes later.)
+Changes made with the Live controls are live only: they are **not** saved to
+`config.yaml`, so the next Play goes back to the file's values.
 
-> **No login.** Anyone who can reach the port can see the values and change the current.
-> Only run the web UI on a trusted network, or set `host: 127.0.0.1` so only the computer
+#### Play and Stop
+
+The emulator is either **RUNNING** (green: ticking, sending on CAN) or **STOPPED** (grey:
+nothing ticks, the interfaces are closed, so no CAN frames). The web server keeps running
+in both, so the page always works.
+
+- **Stop** closes the interfaces. The last values stay on the Live tab.
+- **Play** reads the saved `config.yaml`, builds a fresh pack and opens the interfaces.
+  Time and the live controls start over. If something is wrong (a bad setting, a missing
+  CAN channel...), it stays STOPPED and the page shows the error under the run button.
+
+`start.autostart: true` (the default) presses Play at start, so the Pi service is on the
+bus straight after boot. With `autostart: false` it starts STOPPED and waits for Play.
+If Play fails at start and the web UI is on, it also waits STOPPED, so you can fix the
+setting from the browser. Ctrl+C and SIGTERM still stop everything.
+
+#### Editing settings
+
+1. Press **Stop**: settings can only be edited while STOPPED.
+2. Change values in the **Config** tab and press **Save**. The emulator checks them with
+   the same checks it runs at Play and shows the same error message if one is wrong; then
+   the file is left untouched. A good Save writes `config.yaml`, keeping its comments.
+3. Press **Play** to run with the new settings.
+
+Interface settings (like the DBC file) are checked by the interface itself, so their
+errors show up at Play, not at Save.
+
+If `config.yaml` changes on disk while the page is open (for example you edited it over
+SSH), the page shows a notice with a **Reload** button in the Save card, and refuses to
+Save over the newer file.
+
+`webui.host` and `webui.port` are saved like everything else, but only take effect after
+restarting the program (`sudo systemctl restart open-battery-emulator` on the Pi).
+
+> **No login.** Anyone who can reach the port can see the values, change the current,
+> stop the emulator and change `config.yaml`. Only run the web UI on a trusted network, or set `host: 127.0.0.1` so only the computer
 > itself can open it.
 
 ## Run on a Raspberry Pi

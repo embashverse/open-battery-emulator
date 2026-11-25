@@ -1,14 +1,16 @@
 """The web UI server: a small web server in a background thread (REQ-15).
 
 Standard library only (http.server), so no new dependency. It serves the page
-from static/ and two API routes:
+from static/ and three API routes:
 
-    GET  /api/state     latest pack result and live settings, as JSON
+    GET  /api/state     latest pack result, live settings and run state, as JSON
+    GET  /api/config    the settings form built from config.yaml, as JSON
     POST /api/command   one command as JSON, for example
-                        {"command": "set_soc", "value": 50}
+                        {"command": "set_soc", "value": 50}; answers its id
 
-It only ever calls the two functions of the handle the engine gives it
-(read_state and send_command), never the engine or the pack (REQ-34).
+It only ever calls the three functions of the handle the engine gives it
+(read_state, send_command, read_config), never the engine or the pack (REQ-34).
+It knows nothing about any interface: the form is whatever config.yaml holds.
 """
 
 import json
@@ -27,7 +29,7 @@ PAGES = {
     "/style.css": ("style.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
-MAX_BODY_BYTES = 10_000  # a command is a few dozen bytes
+MAX_BODY_BYTES = 100_000  # a Save carries every changed setting
 
 
 # --- 2. Data shapes -----------------------------------------------------------
@@ -52,6 +54,12 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/api/state":
             self.send_json(200, self.server.handle.read_state())
+        elif self.path == "/api/config":
+            # config.yaml may be missing or broken: answer with the reason.
+            try:
+                self.send_json(200, self.server.handle.read_config())
+            except ValueError as error:
+                self.send_json(500, {"error": str(error)})
         elif self.path in PAGES:
             file_name, content_type = PAGES[self.path]
             self.send_body(200, (STATIC_FOLDER / file_name).read_bytes(), content_type)
@@ -78,11 +86,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         # "python -m emulator.engine" the engine runs as __main__, so its
         # CommandError is a different class object than an imported one.
         try:
-            self.server.handle.send_command(command)
+            command_id = self.server.handle.send_command(command)
         except ValueError as error:
             self.send_json(400, {"error": str(error)})
             return
-        self.send_json(200, {"ok": True, "applied": "at the next tick"})
+        # The result appears in /api/state "actions" under this id.
+        self.send_json(200, {"ok": True, "id": command_id})
 
     def send_json(self, status: int, data) -> None:
         body = json.dumps(data).encode()

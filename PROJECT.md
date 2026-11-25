@@ -7,8 +7,9 @@ like a real battery: SOC falls or rises, cell voltages move, limits change. Pack
 out on CAN like a real BMS would send it. Signals only, no real power flows.
 
 Everything is set in one file, `config.yaml`. The emulator runs on its own without a
-screen. The web UI is optional: it shows live values, lets you change the current, and
-can edit and save `config.yaml`. The file is always the one source of truth.
+screen. The web UI is optional: it shows live values, lets you change the current, has
+a Play / Stop button, and can edit and save `config.yaml`. The file is always the one
+source of truth.
 
 Current comes from one of two kinds of source, set in `config.yaml`:
 
@@ -36,7 +37,8 @@ open-battery-emulator/
 ├── emulator/          the battery model in three levels
 │   ├── cell.py        low:  battery CSVs, OCV, SOC, cell voltage, limits
 │   ├── pack.py        mid:  cells, modules, strings, pack values, state machine
-│   └── engine.py      high: config.yaml, current source, the 100 ms loop
+│   ├── config.py      high: config.yaml: read, check, settings form, battery list, save
+│   └── engine.py      high: current source, run state, the 100 ms loop
 ├── interfaces/        how data leaves and enters, one folder each
 │   └── can/
 │       ├── __init__.py    exposes start, send, read_current, stop
@@ -47,7 +49,7 @@ open-battery-emulator/
 │   ├── open-battery-emulator-can.service   brings the bus up (root)
 │   ├── open-battery-emulator.service       the emulator (normal user)
 │   └── install.sh                          installs or removes both services
-├── webui/             optional: live values, current, edit and save config.yaml
+├── webui/             optional: live values, Play / Stop, edit and save config.yaml
 │   ├── __init__.py    exposes start, stop
 │   ├── server.py      small web server (standard library), runs in a thread
 │   └── static/        index.html, style.css, app.js (no build step, no internet)
@@ -93,17 +95,25 @@ The web UI is a Python package `webui/` whose `__init__.py` exposes two function
 
 ```
 start(host, port, handle)   start the web server in a background thread. handle has
-                            two functions: read_state() returns the latest pack result
-                            and live settings as a plain dict, send_command(command)
-                            checks one command and queues it (raises CommandError if
-                            invalid). Returns the port really used (port 0 = any free one)
+                            three functions:
+                            read_state() returns the latest pack result, live settings,
+                              run state, last error and the results of recent commands
+                              as a plain dict
+                            send_command(command) checks one command, queues it and
+                              returns its id (raises CommandError if invalid)
+                            read_config() returns the settings form built from
+                              config.yaml (only reads the file)
+                            Returns the port really used (port 0 = any free one)
 stop()                      stop the server and its thread (called once on exit)
 ```
 
 The engine imports `webui` with `importlib`, only when `webui.enabled` is true, so with
 the web UI off it is never loaded. It passes the handle, never the Engine itself, so the
 web thread cannot change the pack (REQ-34). Commands are applied by the engine at the
-start of the next tick.
+start of the next pass of the loop. Play, Stop and Save are commands too. The engine
+reports each command's result (`{id, command, ok, message}`) in `read_state()["actions"]`,
+so the page shows it. The web UI has no code for any particular interface: the Config tab
+is built from whatever `config.yaml` holds.
 
 ## config.yaml
 
@@ -118,6 +128,7 @@ pack:
 start:
   soc: 80                  # percent
   temperature_c: 25
+  autostart: true          # false = start STOPPED, press Play in the web UI
 
 variation:                 # natural spread between cells, all 0 = identical cells
   capacity_pct: 2          # each cell's capacity within +-2 % of the battery file
@@ -163,11 +174,29 @@ Three levels, each only uses the one below it:
 
 | Level | File | Knows about | Does |
 |---|---|---|---|
-| High | `engine.py` | config, current source, time | reads `config.yaml`, picks the current (CAN or simulated), runs the loop, hands results to interfaces |
+| High | `config.py` | `config.yaml` | reads and checks it, builds the settings form and battery list for the web UI, saves it. Only `engine.py` uses it |
+| High | `engine.py` | current source, time, run state | Play and Stop, picks the current (CAN or simulated), runs the loop, hands results to interfaces |
 | Mid | `pack.py` | many cells | builds strings and modules, splits current, finds min and max cell, runs the state machine |
 | Low | `cell.py` | one cell | reads the battery CSVs, OCV lookup, SOC by coulomb counting, cell voltage, current limits |
 
-Every 100 ms:
+### Run states
+
+| State | Ticks | Interfaces | Settings |
+|---|---|---|---|
+| STOPPED | none | stopped, so no CAN frames | editable in the web UI |
+| RUNNING | every 100 ms | started, frames sent | locked |
+
+The loop and the web server keep running in both states. **Play** reads the saved
+`config.yaml`, runs every start check, builds a new pack and starts the interfaces; time
+and live settings start over. If anything fails, the emulator stays STOPPED and the page
+shows the error. **Stop** stops the interfaces; the last values stay on the page.
+`start.autostart: true` (the default) presses Play at program start, so the Pi service
+puts the battery on the bus at boot. Ctrl+C and SIGTERM stop everything in either state.
+
+If Play fails at program start and the web UI is on, the emulator stays STOPPED so the
+setting can be fixed in the Config tab. With the web UI off it stops with the error.
+
+Every 100 ms while RUNNING:
 
 ```
 engine.py   get current (CAN or simulated)
@@ -436,20 +465,36 @@ Web UI
   the same process. When false, nothing about the engine changes. `webui.host` (default
   `0.0.0.0`) and `webui.port` (default 8080) come from `config.yaml`. Live changes from
   the page (source, simulated current, Set SOC, Hold SOC) are not saved to `config.yaml`,
-  and the page says so.
+  and the page says so. `webui.host` and `webui.port` can be saved from the page but take
+  effect only after a restart of the program; the page says so.
 - **REQ-34** Only the engine thread changes the pack. The web server only reads the
   latest result and puts commands in a queue; the engine applies queued commands at the
   start of the next tick. The web UI gets a handle with two functions (read the state,
   queue a command), never the Engine itself.
 - **REQ-35** The page works without internet: no external scripts, styles or fonts.
 - **REQ-16** `config.yaml` is the only place settings are stored. The web UI loads its
-  settings form from the file, and a Save button checks the values and writes them back
-  to the file, keeping comments. The emulator then restarts with the new settings.
-- **REQ-17** If `config.yaml` was edited by hand while running, the web UI shows that the
-  file changed and offers to reload it, so the UI never shows stale values.
+  settings form from the file. Settings are edited only while STOPPED. Save is a queued
+  command: the engine checks the values with exactly the same code it uses at Play (not a
+  copy) and refuses with the same message. Then it writes the file atomically (a
+  temporary file in the same folder, then `os.replace`), keeping comments and key order
+  (ruamel.yaml round trip). Applying the saved settings means pressing Play.
+- **REQ-17** The page remembers which version of `config.yaml` it loaded (a hash of the
+  file). Save is refused if the file changed since, and the page offers to reload. While
+  open, the page notices a changed file and shows a reload notice, so it never shows
+  stale values.
 - **REQ-18** The web UI builds its choices from what exists: batteries from the folders in
-  `batteries/`, interfaces and their settings from `config.yaml`. A new battery or
-  interface appears in the UI without UI code changes.
+  `batteries/`, interface sections and their settings shown generically from
+  `config.yaml`. A new battery or interface section appears in the Config tab without
+  changes to `webui/` code.
+- **REQ-36** The emulator is STOPPED (no ticks, interfaces stopped so no CAN frames,
+  settings editable) or RUNNING (ticks and frames, settings locked), see Run states. The
+  engine loop and the web server keep running while STOPPED. Play builds the pack and
+  starts the interfaces from the saved `config.yaml`; if that fails, the emulator stays
+  STOPPED and the page shows the error. Stop stops the interfaces. The page has one big
+  Play or Stop button and shows the run state on every tab.
+- **REQ-37** `start.autostart` (default true) starts the engine RUNNING, so the Pi
+  service puts the battery on the bus at boot. With `autostart: false` it starts
+  STOPPED.
 - **REQ-29** The web UI lets the user change the CAN ID of each message in the DBC
   (PackStatus, CellStats, PackLimits, CurrentCommand) and the module frame `base_id` and
   `id_step` in `config.yaml`. Signal names and layouts are not editable in the UI. Save
@@ -472,6 +517,53 @@ Deployment
 - **REQ-32** One install script sets up both services on a Pi, and can also remove them.
 - **REQ-33** The engine stops cleanly on SIGTERM as well as Ctrl+C, calling `stop()` on
   every interface.
+
+## UI style
+
+The web UI follows a few rules, so it stays calm and readable:
+
+- Calm and minimal, very little decoration: system fonts, light grey page, white cards
+  with rounded corners, generous spacing, dark grey text and lighter grey secondary text.
+  Dark mode follows the system setting.
+- One blue accent, for controls and the selected tab.
+- Colour only where something needs attention: green dot while running, green for
+  charging, red for EMPTY, FULL, the temperature flag, errors and a lost connection, amber
+  for the timeout flag.
+- The header has a large, bold title on the left and the connection indicator on the
+  right: an outline pill, green while connected, red for no connection.
+- A small dot beats like a heart (two quick beats, then a pause) on the connection
+  indicator while connected and on the run button while running. Nothing moves when
+  stopped or disconnected.
+- Messages appear next to the button that caused them, so the page never shifts: under
+  the run button on the Live tab, and on the Config tab in a slot of fixed height inside
+  the Save card, above the Save button, so the button never moves. Errors in red until
+  closed, confirmations short and fading out, at most the newest three at a time.
+- Two tabs, Live and Config, each fits on one laptop screen without scrolling. A pack too
+  large for the screen scrolls inside the cell grid card. On a phone the page scrolls.
+- Live tab, left: a SOC card with the big SOC value and a small time to empty or full, a
+  bar (green above 50 %, amber from 20 to 50 %, red below 20 %) with a soft light moving
+  the way the charge goes, and one row of symbols and numbers (lowest and highest cell with
+  their position, spread, charge and discharge limit), each explained on hover or tap.
+  Voltage, current and state sit stacked next to it at the same height, one line each.
+- Live tab, right: the controls (sections with room and a thin line between them), the
+  run time, and one run button in two equal halves that read as one unit: the state on
+  the left (dot and Running or Stopped), a filled action on the right that says what
+  pressing it does (green Play, red Stop).
+- Simulated current: a Discharge or Charge choice and a positive number of amps, sent
+  after a short pause.
+- Cell grid: strings side by side, each a block with its label and one row of small
+  rounded squares per module. The square size follows the card's width up to a maximum,
+  and the card is only as tall as its grid and legend; the squares shrink only when the
+  screen is too short, and below a minimum the grid scrolls. Normal cells are a calm light
+  green, amber for a cell more than 50 mV from the pack average, red for a cell at or
+  beyond its minimum or maximum voltage, and for the cell that caused FULL (highest) or
+  EMPTY (lowest). The lowest and highest cell get a thin outline. A short legend explains
+  this. A cell shows its module, cell number, voltage and SOC on hover or tap.
+- Config tab: the setting groups as cards in an even grid, cards in one row the same
+  height. Interfaces spans two columns at the bottom; next to it a Save card with a short
+  reminder, room for messages, the number of unsaved changes and the Save button.
+- Flags and the FULL and EMPTY states explain themselves on hover or tap. A current source
+  that cannot be chosen right now is shown greyed with the reason.
 
 ## How we work (light V-model)
 
@@ -507,8 +599,11 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-31 | `sudo reboot`, log in, `systemctl status open-battery-emulator` | running again after the reboot, `candump vcan0` shows frames |19.11.2026 |Pass |
 | REQ-31 | `sudo systemctl kill -s KILL open-battery-emulator`, wait, `systemctl status open-battery-emulator` | running again within about 5 s, with a new PID |19.11.2026 |Pass |
 | REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` |19.11.2026 |Pass |
-| REQ-15 | `webui.enabled: true`, start the emulator, open `http://localhost:8080` on the laptop | values update about twice a second, the cell grid shows every module, Set SOC / Hold SOC / simulated current change the values on the next update, SOC 150 shows an error | | |
-| REQ-15 | on the Pi, open `http://battery.local:8080` on a phone on the same network | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
+| REQ-15 | `webui.enabled: true`, start the emulator, open `http://localhost:8080` on the laptop | values update about twice a second, the cell grid shows every module, Set SOC / Hold SOC / simulated current change the values on the next update, SOC 150 shows an error |25.11.2026 |Pass |
+| REQ-15 | on the Pi, open `http://<hostname>.local:8080` on a phone on the same network (`<hostname>` is the name set in Raspberry Pi Imager) | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
+| REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, run button shows a grey dot and Stopped, Config fields editable. Play: frames again, run button shows a green dot and Running, fields locked |25.11.2026 |Pass |
+| REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged |25.11.2026 |Pass |
+| REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears in the Save card; Reload shows the new value |25.11.2026 |Pass |
 
 ## Milestones
 
@@ -519,7 +614,7 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | M2 | Engine | engine runs in the terminal from `config.yaml` with simulated current and prints values |
 | M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
 | M4 | Pi | runs on the Pi as a service on boot with `vcan0`, survives a reboot, restarts after a crash |
-| M5 | Web UI | optional page shows live values, changes the simulated current, saves settings to `config.yaml`, and edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
+| M5 | Web UI | M5a: optional page shows live values and changes the simulated current. M5b: Live and Config tabs, Play / Stop, settings saved to `config.yaml` (REQ-16, 17, 18, 36, 37). M5c: edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
 | v1.0 | Release | real hardware test with an MCP2515 HAT on the Pi and a CANable on a laptop (frames received and current sent over real wires), README quick start works, every REQ is verified: a passing test, or a manual check recorded in PROJECT.md |
 
 ## Later
@@ -528,4 +623,7 @@ Temperature model (temperature changing with current), fault injection, NMC and 
 batteries, gradual hysteresis transition (OCV moves from one curve to the other over a
 few % SOC instead of switching at once), per module capacity, load profiles from CSV, script that writes module frames
 into a DBC for decoding tools, UART interface, isoSPI interface (needs an LTC6820 type
-transceiver and tight timing, likely on an MCU rather than Linux), Modbus or MQTT for BESS.
+transceiver and tight timing, likely on an MCU rather than Linux), Modbus or MQTT for BESS, cell and module signals in the DBC by naming pattern (for
+example `Cell_M3_C7`, `ModuleTemp_M3`), filled by module and cell number, an optional
+`check(settings, pack_info)` function in the interface contract, so Save can catch
+interface errors like a broken DBC before Play.
