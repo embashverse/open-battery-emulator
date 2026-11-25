@@ -14,15 +14,22 @@
 const POLL_MS = 500;
 const CONFIG_CHECK_MS = 2000; // how often to look for a changed config.yaml
 const CELL_DEVIATION_WARN_V = 0.050; // amber when a cell is this far from the pack average
+const SOC_GREEN_ABOVE_PCT = 50; // SOC bar: green above this,
+const SOC_RED_BELOW_PCT = 20; // red below this, amber in between
 const CURRENT_STEP_A = 1; // what one press of - or + changes
 const SEND_PAUSE_MS = 300; // after the last - or + press, then the current is sent
-const ROW_MIN_PX = 8; // cell grid rows never get smaller; the grid scrolls instead
-const ROW_MAX_PX = 28;
+const CELL_MIN_PX = 10; // cell squares never get smaller; the grid scrolls instead
+const CELL_MAX_PX = 24;
+const CONFIRM_MS = 3000; // how long a confirmation stays before it fades
 
 // Explanations shown on hover or tap.
 const TIPS = {
   FULL: "a cell reached its maximum voltage, charging is blocked",
   EMPTY: "a cell reached its minimum voltage, discharging is blocked",
+};
+const CAUSED = {
+  FULL: "caused FULL: charging is blocked",
+  EMPTY: "caused EMPTY: discharging is blocked",
 };
 
 // --- 2. Talking to the server ------------------------------------------------
@@ -76,17 +83,70 @@ function handleActions(actions) {
   });
 }
 
-function showMessage(id, text, kind) {
-  const element = document.getElementById(id);
-  element.textContent = text;
-  element.className = "message " + kind;
-}
-
 function setText(id, text) {
   document.getElementById(id).textContent = text;
 }
 
-// --- 3. Tooltips (hover or tap) ----------------------------------------------
+// --- 3. Messages -------------------------------------------------------------
+// One place for every message, under the header, on both tabs. An error
+// stays until it is closed; a confirmation fades out after CONFIRM_MS. The
+// same error text is never shown twice at once.
+
+// Shows a message. kind is "error" or "ok". action, if given, is
+// {label, onClick} for a button in the message (like Reload). Returns the
+// message element, so it can be removed by code too.
+function notify(text, kind, action) {
+  const box = document.getElementById("messages");
+  const already = Array.from(box.children).find(function (m) {
+    return m.dataset.text === text;
+  });
+  if (already) already.remove(); // shown again: the newest one counts
+
+  const message = document.createElement("div");
+  message.className = "message " + kind;
+  message.dataset.text = text;
+  const words = document.createElement("span");
+  words.className = "text";
+  words.textContent = text;
+  message.appendChild(words);
+
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    button.addEventListener("click", action.onClick);
+    message.appendChild(button);
+  }
+  if (kind === "error" || action) {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "close";
+    close.setAttribute("aria-label", "Close");
+    close.textContent = "×";
+    close.addEventListener("click", function () {
+      message.remove();
+    });
+    message.appendChild(close);
+  } else {
+    setTimeout(function () {
+      message.classList.add("fading");
+      setTimeout(function () { message.remove(); }, 400); // after the fade
+    }, CONFIRM_MS);
+  }
+  box.appendChild(message);
+  return message;
+}
+
+// The result of a command: a short confirmation, or the error.
+function notifyResult(result, okText) {
+  if (result.ok) {
+    notify(okText || result.message, "ok");
+  } else {
+    notify(result.message, "error");
+  }
+}
+
+// --- 4. Tooltips (hover or tap) ----------------------------------------------
 // Any element with a data-tip attribute shows that text in one floating box:
 // on hover with a mouse, or on tap (tap again or anywhere else to close).
 // The box is fixed to the window, so a scrolling card never cuts it off.
@@ -147,11 +207,12 @@ function setUpTips() {
   window.addEventListener("scroll", hideTip, true);
 }
 
-// --- 4. Header: connection and the run button --------------------------------
+// --- 5. Header: connection and the run button --------------------------------
 
 let runState = null; // "RUNNING" or "STOPPED", from the latest state
 let connected = false;
 let busy = false; // a Play or Stop is on its way
+let shownError = null; // the failed Play error already shown, so it shows once
 
 function showConnection(ok) {
   connected = ok;
@@ -161,35 +222,38 @@ function showConnection(ok) {
   showRunButton();
 }
 
-// RUNNING: green dot, "Running", stop symbol. STOPPED: grey dot, "Stopped",
-// play symbol. While a command is on its way: "Starting…" or "Stopping…".
+// Left part: the state (green dot "Running" or grey dot "Stopped"). Right
+// part: what pressing does ("Play" or "Stop"), or "Starting…" / "Stopping…"
+// while the command is on its way.
 function showRunButton() {
   const running = runState === "RUNNING";
   const button = document.getElementById("run-button");
   button.classList.toggle("running", running);
-  button.classList.toggle("busy", busy);
   button.querySelector(".symbol").className = "symbol " + (running ? "stop" : "play");
   button.disabled = busy || !connected || runState === null;
   button.setAttribute("aria-label", running ? "Running, press to stop" : "Stopped, press to play");
 
-  let label = running ? "Running" : "Stopped";
-  if (busy) label = running ? "Stopping…" : "Starting…";
-  setText("run-label", label);
+  setText("run-label", running ? "Running" : "Stopped");
+  let verb = running ? "Stop" : "Play";
+  if (busy) verb = running ? "Stopping…" : "Starting…";
+  setText("run-verb", verb);
 }
 
 function showHeader(state) {
   runState = state.run_state;
   showRunButton();
 
-  const error = document.getElementById("run-error");
-  error.hidden = !(state.error && state.run_state === "STOPPED");
-  error.textContent = state.error ? "Could not start: " + state.error : "";
+  // A failed Play is shown once; closed, it comes back only for a new error.
+  if (state.error && state.run_state === "STOPPED" && state.error !== shownError) {
+    notify("Could not start: " + state.error, "error");
+  }
+  shownError = state.error;
 
   // Editing is only possible while STOPPED (REQ-16), live controls only
   // while RUNNING.
   const running = state.run_state === "RUNNING";
   document.getElementById("config-fields").disabled = running;
-  document.getElementById("save").disabled = running;
+  document.getElementById("save").disabled = running || saving;
   document.getElementById("config-lock").hidden = !running;
   document.getElementById("live-controls").disabled = !running;
 }
@@ -201,12 +265,14 @@ async function playOrStop() {
   const result = await sendCommand(command, null);
   busy = false;
   showRunButton();
+  // A failed Play also shows up as state.error; this shows it at once.
   if (!result.ok) {
-    showMessage("message", result.message, "error");
+    shownError = result.message;
+    notify("Could not start: " + result.message, "error");
   }
 }
 
-// --- 5. Tabs -----------------------------------------------------------------
+// --- 6. Tabs -----------------------------------------------------------------
 // The open tab is kept in the address (#live or #config), so a reload keeps it.
 
 function showTab(name) {
@@ -216,7 +282,6 @@ function showTab(name) {
   document.getElementById("tab-live").hidden = name !== "live";
   document.getElementById("tab-config").hidden = name !== "config";
   history.replaceState(null, "", "#" + name);
-  sizeGridRows(); // the grid had no size while its tab was hidden
 }
 
 function setUpTabs() {
@@ -228,7 +293,7 @@ function setUpTabs() {
   showTab(location.hash === "#config" ? "config" : "live");
 }
 
-// --- 6. Live values ----------------------------------------------------------
+// --- 7. Live values ----------------------------------------------------------
 
 function where(position) {
   return "M" + position.module + " C" + position.cell;
@@ -254,8 +319,13 @@ function showValues(state) {
     delete stateBox.dataset.tip;
   }
 
-  setText("soc", result.soc_pct.toFixed(2) + " %");
-  document.getElementById("soc-bar").style.width = Math.max(0, Math.min(100, result.soc_pct)) + "%";
+  const soc = result.soc_pct;
+  setText("soc", soc.toFixed(2) + " %");
+  const bar = document.getElementById("soc-bar");
+  bar.style.width = Math.max(0, Math.min(100, soc)) + "%";
+  bar.classList.toggle("red", soc < SOC_RED_BELOW_PCT);
+  bar.classList.toggle("amber", soc >= SOC_RED_BELOW_PCT && soc <= SOC_GREEN_ABOVE_PCT);
+
   setText("voltage", result.voltage_v.toFixed(2) + " V");
   setText("current", result.current_a.toFixed(1) + " A");
 
@@ -282,21 +352,31 @@ function showValues(state) {
   document.getElementById("pill-temp").hidden = !result.temp_out_of_range;
 }
 
-// --- 7. Cell grid ------------------------------------------------------------
-// One row per module, one box per cell. Neutral by default: amber for a cell
-// more than CELL_DEVIATION_WARN_V from the pack average, red for a cell at or
-// beyond its minimum or maximum voltage. The lowest and highest cell get an
-// outline. The boxes are built once and updated on every poll.
+// --- 8. Cell grid ------------------------------------------------------------
+// One row per module, one small square per cell, grouped by string with a
+// label above each string. Calm green by default: amber for a cell more than
+// CELL_DEVIATION_WARN_V from the pack average, red for a cell at or beyond
+// its minimum or maximum voltage, and for the cell that caused FULL or EMPTY.
+// The lowest and highest cell get an outline. Built once, updated each poll.
 
-let gridShape = ""; // "modules x cells" of the boxes on the page
+let gridShape = ""; // "strings x modules x cells" of the squares on the page
 let gridModules = 0;
+let gridStrings = 0;
+let gridColumns = 0;
 
-function buildGrid(modules) {
+function buildGrid(modules, strings) {
   const grid = document.getElementById("grid");
   const cellsPerModule = modules[0].length;
+  const modulesPerString = modules.length / strings;
   grid.innerHTML = "";
-  grid.style.gridTemplateColumns = "auto repeat(" + cellsPerModule + ", minmax(0, 1fr))";
+  grid.style.gridTemplateColumns = "auto repeat(" + cellsPerModule + ", var(--cell-size))";
   modules.forEach(function (cells, m) {
+    if (m % modulesPerString === 0) {
+      const label = document.createElement("span");
+      label.className = "string-label";
+      label.textContent = "String " + (m / modulesPerString + 1);
+      grid.appendChild(label);
+    }
     const label = document.createElement("span");
     label.className = "module-label";
     label.textContent = "M" + (m + 1);
@@ -309,29 +389,48 @@ function buildGrid(modules) {
       grid.appendChild(box);
     });
   });
-  gridShape = modules.length + "x" + cellsPerModule;
+  gridShape = strings + "x" + modules.length + "x" + cellsPerModule;
   gridModules = modules.length;
-  sizeGridRows();
+  gridStrings = strings;
+  gridColumns = cellsPerModule;
+  sizeCells();
 }
 
-// Rows share the height the card has left, between ROW_MIN_PX and
-// ROW_MAX_PX. A pack too large for that scrolls inside the card.
-function sizeGridRows() {
+// The squares share the space the card has left, between CELL_MIN_PX and
+// CELL_MAX_PX. A pack too large for that scrolls inside the card.
+function sizeCells() {
   if (gridModules === 0) return;
   const area = document.querySelector(".grid-scroll");
   if (area.clientHeight === 0) return; // tab hidden
   const gap = 3;
-  const free = area.clientHeight - 4 - gap * (gridModules - 1); // 4 = grid padding
-  const row = Math.max(ROW_MIN_PX, Math.min(ROW_MAX_PX, Math.floor(free / gridModules)));
-  document.getElementById("grid").style.setProperty("--row-h", row + "px");
+  const padding = 4;
+  const labelWidth = 34; // the "M16" column
+  const rows = gridModules + gridStrings; // module rows and string label rows
+  // The "String n" rows, measured on the page (height plus the gap above).
+  let labels = 0;
+  document.querySelectorAll("#grid .string-label").forEach(function (label) {
+    labels += label.offsetHeight + parseFloat(getComputedStyle(label).marginTop);
+  });
+  const byHeight = (area.clientHeight - padding - labels - gap * (rows - 1)) / gridModules;
+  const byWidth = (area.clientWidth - padding - labelWidth - gap * gridColumns) / gridColumns;
+  let size = Math.max(CELL_MIN_PX, Math.min(CELL_MAX_PX, Math.floor(Math.min(byHeight, byWidth))));
+  const grid = document.getElementById("grid");
+  grid.style.setProperty("--cell-size", size + "px");
+  // Labels can make rows a pixel taller than the estimate: shrink until it
+  // really fits (below CELL_MIN_PX the card scrolls instead).
+  while (size > CELL_MIN_PX && area.scrollHeight > area.clientHeight) {
+    size -= 1;
+    grid.style.setProperty("--cell-size", size + "px");
+  }
 }
 
 function showGrid(state) {
   const result = state.result;
   if (result === null) return;
   const modules = result.module_cell_voltages;
-  if (modules.length + "x" + modules[0].length !== gridShape) {
-    buildGrid(modules);
+  const strings = result.strings.length;
+  if (strings + "x" + modules.length + "x" + modules[0].length !== gridShape) {
+    buildGrid(modules, strings);
   }
 
   let sum = 0;
@@ -345,24 +444,34 @@ function showGrid(state) {
   const average = sum / count;
   const low = result.lowest_cell;
   const high = result.highest_cell;
+  // The cell that caused FULL (highest) or EMPTY (lowest), if any.
+  let culprit = null;
+  if (result.state === "FULL") culprit = high;
+  if (result.state === "EMPTY") culprit = low;
+  const socs = state.module_cell_socs;
 
   document.querySelectorAll("#grid .cell").forEach(function (box) {
     const m = Number(box.dataset.module);
     const c = Number(box.dataset.cell);
     const voltage = modules[m - 1][c - 1];
+    const caused = culprit !== null && m === culprit.module && c === culprit.cell;
     const atLimit =
       (state.cell_v_min !== null && voltage <= state.cell_v_min) ||
       (state.cell_v_max !== null && voltage >= state.cell_v_max);
     const farOff = Math.abs(voltage - average) > CELL_DEVIATION_WARN_V;
     const extreme = (m === low.module && c === low.cell) || (m === high.module && c === high.cell);
-    box.classList.toggle("red", atLimit);
-    box.classList.toggle("amber", farOff && !atLimit);
+    box.classList.toggle("red", atLimit || caused);
+    box.classList.toggle("amber", farOff && !atLimit && !caused);
     box.classList.toggle("extreme", extreme);
-    box.dataset.tip = "Module " + m + ", cell " + c + ": " + voltage.toFixed(3) + " V";
+
+    let tip = "Module " + m + ", cell " + c + ": " + voltage.toFixed(3) + " V";
+    if (socs) tip += ", SOC " + socs[m - 1][c - 1].toFixed(1) + " %";
+    if (caused) tip += " (" + CAUSED[result.state] + ")";
+    box.dataset.tip = tip;
   });
 }
 
-// --- 8. Live controls --------------------------------------------------------
+// --- 9. Live controls --------------------------------------------------------
 // The controls show the engine's live settings, but are never overwritten
 // while you are using them.
 
@@ -441,9 +550,9 @@ function showSliderValue() {
 }
 
 async function sendLive(command, value) {
-  showMessage("message", "Sending…", "");
   const result = await sendCommand(command, value);
-  showMessage("message", result.ok ? "Applied." : result.message, result.ok ? "ok" : "error");
+  notifyResult(result, "Applied");
+  return result;
 }
 
 function sendCurrent() {
@@ -493,7 +602,8 @@ function setUpControls() {
   });
 
   document.getElementById("run-button").addEventListener("click", playOrStop);
-  window.addEventListener("resize", sizeGridRows);
+  // Messages coming and going change the space the grid has.
+  new ResizeObserver(sizeCells).observe(document.querySelector(".grid-scroll"));
   setText("warn-mv", (CELL_DEVIATION_WARN_V * 1000).toFixed(0));
 }
 
@@ -505,7 +615,7 @@ function readNumber(input) {
   return text.trim() === "" || Number.isNaN(number) ? text : number;
 }
 
-// --- 9. Config form ----------------------------------------------------------
+// --- 10. Config form ---------------------------------------------------------
 // One input per field from GET /api/config. The group is the first part of
 // the path (pack.cells_per_module -> Pack). Under Interfaces, each interface
 // gets its own heading, whatever its name.
@@ -517,11 +627,11 @@ async function loadConfig() {
   try {
     loadedConfig = await getJson("/api/config");
   } catch (error) {
-    showMessage("config-message", "Cannot read config.yaml: " + error.message, "error");
+    notify("Cannot read config.yaml: " + error.message, "error");
     return;
   }
   buildForm(loadedConfig);
-  document.getElementById("reload-banner").hidden = true;
+  hideReloadNotice();
 }
 
 function groupOf(path) {
@@ -561,7 +671,6 @@ function buildForm(config) {
 
   fillSourceChoices();
   showPackSummary();
-  showMessage("config-message", "", "");
 }
 
 // One labelled input: label on the left, input on the right. The input keeps
@@ -694,7 +803,11 @@ function showPackSummary() {
   summary.textContent = parts.join(" · ");
 }
 
-// --- 10. Saving and noticing a changed file ----------------------------------
+// --- 11. Saving and noticing a changed file ----------------------------------
+
+let saving = false; // a Save is on its way
+let reloadNotice = null; // the "config.yaml changed" message, while shown
+let reloadNoticeVersion = null; // the file version it was shown for
 
 async function saveConfig(event) {
   event.preventDefault();
@@ -705,44 +818,66 @@ async function saveConfig(event) {
     }
   });
   if (Object.keys(changes).length === 0) {
-    showMessage("config-message", "Nothing changed.", "");
+    notify("Nothing changed.", "ok");
     return;
   }
 
-  showMessage("config-message", "Checking and saving…", "");
+  const button = document.getElementById("save");
+  saving = true;
+  button.disabled = true;
+  button.textContent = "Saving…";
   const result = await sendCommand("save_config", {
     version: loadedConfig.version,
     changes: changes,
   });
+  saving = false;
+  button.disabled = runState === "RUNNING";
+  button.textContent = "Save";
   if (result.ok) {
     await loadConfig(); // the form now shows the saved file
-    showMessage("config-message", result.message, "ok");
+    notify(result.message, "ok");
   } else {
-    showMessage("config-message", result.message, "error");
-    checkConfigFile(); // shows the reload banner if the file changed
+    notify(result.message, "error");
+    checkConfigFile(); // shows the reload notice if the file changed
   }
 }
 
-// Shows the reload banner when config.yaml is no longer the version the form
+// Shows the reload notice when config.yaml is no longer the version the form
 // was built from (REQ-17). Never reloads by itself: that would lose edits.
 async function checkConfigFile() {
   if (loadedConfig === null) return;
+  let now;
   try {
-    const now = await getJson("/api/config");
-    document.getElementById("reload-banner").hidden = now.version === loadedConfig.version;
+    now = await getJson("/api/config");
   } catch (error) {
-    // the connection indicator already shows a lost connection
+    return; // the connection indicator already shows a lost connection
   }
+  if (now.version === loadedConfig.version) {
+    hideReloadNotice();
+  } else if (now.version !== reloadNoticeVersion) {
+    // Once per new version of the file: closed, it stays closed until the
+    // file changes again.
+    reloadNotice = notify("config.yaml changed since this page loaded it.", "ok", {
+      label: "Reload",
+      onClick: loadConfig,
+    });
+    reloadNoticeVersion = now.version;
+  }
+}
+
+function hideReloadNotice() {
+  if (reloadNotice !== null) reloadNotice.remove();
+  reloadNotice = null;
+  reloadNoticeVersion = null;
 }
 
 function setUpConfig() {
   document.getElementById("config-form").addEventListener("submit", saveConfig);
-  document.getElementById("reload").addEventListener("click", loadConfig);
   setInterval(checkConfigFile, CONFIG_CHECK_MS);
   loadConfig();
 }
 
-// --- 11. The polling loop ----------------------------------------------------
+// --- 12. The polling loop ----------------------------------------------------
 
 async function poll() {
   try {

@@ -53,6 +53,7 @@ from emulator.pack import (
     PackResult,
     build_pack,
     cell_voltage_range,
+    module_cell_socs,
     pack_info,
     set_hold_soc,
     set_soc,
@@ -569,8 +570,10 @@ def make_live_state(engine: Engine, result: PackResult | None) -> dict:
     """
     if engine.pack is None:
         cell_v_min, cell_v_max = None, None
+        cell_socs = None
     else:
         cell_v_min, cell_v_max = cell_voltage_range(engine.pack)
+        cell_socs = module_cell_socs(engine.pack)
     return {
         "run_state": engine.run_state,
         "error": engine.error,
@@ -585,6 +588,7 @@ def make_live_state(engine: Engine, result: PackResult | None) -> dict:
         "timeout_ms": None if engine.config is None else engine.config.timeout_ms,
         "cell_v_min": cell_v_min,
         "cell_v_max": cell_v_max,
+        "module_cell_socs": cell_socs,  # same shape as result.module_cell_voltages
     }
 
 

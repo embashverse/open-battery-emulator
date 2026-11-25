@@ -528,13 +528,22 @@ The web UI follows a few rules, so it stays calm and readable:
 - One blue accent, for controls and the selected tab.
 - Colour only where something needs attention: green dot while running, red for EMPTY,
   FULL, the temperature flag, errors and a lost connection, amber for the timeout flag.
-- The header has the title with a small connection indicator, and one run button that
-  shows the run state and is the Play / Stop control.
+- The header has the title with a connection indicator in a pill, and one run button in
+  two parts that read as one unit: the state on the left (dot and Running or Stopped), a
+  filled action on the right that says what pressing it does (green Play, red Stop).
+- All messages appear in one place, a slim banner under the header: errors in red until
+  closed, confirmations short and fading out.
+- The SOC bar is green above 50 %, amber from 20 to 50 %, red below 20 %.
 - Two tabs, Live and Config, each fits on one laptop screen without scrolling. A pack too
   large for the screen scrolls inside the cell grid card. On a phone the page scrolls.
-- Cell grid: cells are neutral. Amber for a cell more than 50 mV from the pack average, red
-  for a cell at or beyond its minimum or maximum voltage. The lowest and highest cell get
-  a thin outline. A one line legend explains this.
+- Cell grid: one small square per cell, grouped by string with a label above each
+  string. Normal cells are a calm light green, amber for a cell more than 50 mV from the
+  pack average, red for a cell at or beyond its minimum or maximum voltage, and for the
+  cell that caused FULL (highest) or EMPTY (lowest). The lowest and highest cell get a
+  thin outline. A one line legend explains this. A cell shows its module, cell number,
+  voltage and SOC on hover or tap.
+- Config tab: the setting groups as cards in an even grid, cards in one row the same
+  height, and Interfaces across the full width at the bottom, because it grows.
 - Flags and the FULL and EMPTY states explain themselves on hover or tap. A current source
   that cannot be chosen right now is shown greyed with the reason.
 

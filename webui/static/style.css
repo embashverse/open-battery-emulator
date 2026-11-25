@@ -12,8 +12,7 @@
   --text: #2b2f33;        /* dark grey */
   --muted: #80868d;       /* secondary text */
   --line: #e3e5e8;        /* borders and the empty part of bars */
-  --cell: #d5d8dc;        /* a normal cell in the grid */
-  --bar: #8d939a;         /* the SOC bar */
+  --cell: #bfe3c8;        /* a normal cell in the grid: calm light green */
   --accent: #2463c9;      /* controls and the selected tab */
   --accent-text: #ffffff;
   /* Attention colours, used nowhere else */
@@ -21,6 +20,7 @@
   --amber: #c27c0e;
   --red: #c7372f;
   --red-bg: #fbeceb;
+  --green-bg: #e7f4ea;
   --tip-bg: #2b2f33;
   --tip-text: #ffffff;
 }
@@ -32,14 +32,14 @@
     --text: #e4e6e8;
     --muted: #8f959c;
     --line: #34383d;
-    --cell: #3d4248;
-    --bar: #9aa0a7;
+    --cell: #3c6a4a;
     --accent: #5b8fe6;
     --accent-text: #0f1114;
     --green: #3fb565;
     --amber: #e0a03a;
     --red: #ec6a62;
     --red-bg: #3a2322;
+    --green-bg: #1f3326;
     --tip-bg: #e4e6e8;
     --tip-text: #17191c;
   }
@@ -88,6 +88,7 @@ main {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   width: 100%;
   max-width: 1400px;
@@ -95,53 +96,102 @@ main {
   padding: 12px 16px 8px;
 }
 
-.title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-.connection { font-size: 0.8rem; color: var(--muted); }
-.connection.lost { color: var(--red); }
+/* The capsule shape shared by the connection indicator and the run button. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
 
-/* One button that shows the run state and is the control. */
+.connection { font-size: 0.8rem; color: var(--muted); padding: 3px 12px; }
+.connection.lost { color: var(--red); border-color: var(--red); }
+
+/* One button in two parts that read as one unit: the state on the left, a
+   filled action on the right that says what pressing it does. */
 .run-button {
+  display: inline-flex;
+  align-items: stretch;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;  /* on a narrow screen the header wraps, the button stays whole */
+  overflow: hidden;
+  transition: border-color 0.15s, transform 0.08s;
+}
+.run-state { display: flex; align-items: center; gap: 8px; padding: 9px 14px 9px 16px; }
+.run-button .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.run-button.running .dot { background: var(--green); }
+
+.run-action {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 14px;
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--text);
-  border: 1px solid var(--line);
-  font-weight: 600;
+  padding: 9px 18px 9px 14px;
+  color: #fff;
+  background: var(--green);  /* Play */
+  transition: filter 0.15s;
 }
-.run-button .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-.run-button.running .dot { background: var(--green); }
-.run-button .symbol { width: 10px; height: 10px; margin-left: 4px; }
-.run-button .symbol.stop { background: var(--accent); border-radius: 2px; }
+.run-button.running .run-action { background: var(--red); }  /* Stop */
+
+.run-button .symbol.stop { width: 10px; height: 10px; background: currentColor; border-radius: 2px; }
 .run-button .symbol.play {   /* a triangle pointing right, drawn with borders */
   width: 0;
   height: 0;
   border-style: solid;
   border-width: 6px 0 6px 10px;
-  border-color: transparent transparent transparent var(--accent);
+  border-color: transparent transparent transparent currentColor;
 }
-.run-button.busy .symbol { opacity: 0.3; }
 
-.banner {
-  width: calc(100% - 32px);
-  max-width: 1368px;
-  margin: 0 auto 10px;
-  padding: 8px 14px;
-  border-radius: 10px;
-  background: var(--card);
-  font-size: 0.9rem;
+.run-button:hover:not(:disabled) { border-color: var(--muted); }
+.run-button:hover:not(:disabled) .run-action { filter: brightness(0.9); }
+.run-button:active:not(:disabled) { transform: scale(0.97); }
+.run-button:active:not(:disabled) .run-action { filter: brightness(0.8); }
+.run-button:disabled { opacity: 1; }  /* the state stays readable */
+.run-button:disabled .run-action { opacity: 0.5; }
+.run-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Messages: one slim banner per message, under the header, on both tabs. */
+.messages {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
-.banner[hidden] { display: none; }
-.banner.error { background: var(--red-bg); color: var(--red); }
-#tab-config .banner { margin: 0 0 10px; width: auto; max-width: none; }
+.messages:not(:empty) { margin-bottom: 10px; }
+.message {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  background: var(--card);
+  transition: opacity 0.4s;
+}
+.message .text { flex: 1; }
+.message.error { background: var(--red-bg); color: var(--red); }
+.message.ok { background: var(--green-bg); color: var(--green); }
+.message.fading { opacity: 0; }
+.message button { padding: 3px 12px; }
+.message .close {
+  background: none;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 8px;
+}
 
 /* A compact segmented switch: the tabs, and the current source. */
 .tabs, .segmented {
@@ -184,7 +234,9 @@ main {
   font-variant-numeric: tabular-nums;
 }
 .bar { height: 4px; border-radius: 2px; background: var(--line); margin: 4px 0 8px; }
-.bar-fill { height: 100%; width: 0; border-radius: 2px; background: var(--bar); }
+.bar-fill { height: 100%; width: 0; border-radius: 2px; background: var(--green); }
+.bar-fill.amber { background: var(--amber); }
+.bar-fill.red { background: var(--red); }
 .line { font-variant-numeric: tabular-nums; }
 
 .small-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
@@ -195,7 +247,7 @@ main {
 .stopped .big-value, .stopped .value, .stopped .line { color: var(--muted); }  /* last values, frozen */
 
 .pills { display: flex; gap: 6px; min-height: 22px; margin-top: 4px; }
-.pill {
+.flag {
   font-size: 0.75rem;
   font-weight: 600;
   padding: 2px 9px;
@@ -203,12 +255,13 @@ main {
   color: #fff;
   cursor: help;
 }
-.pill[hidden] { display: none; }
-.pill.amber { background: var(--amber); }
-.pill.red { background: var(--red); }
+.flag[hidden] { display: none; }
+.flag.amber { background: var(--amber); }
+.flag.red { background: var(--red); }
 
 /* --- 5. Cell grid ---------------------------------------------------------- */
-/* Neutral by default; amber and red only for cells that need attention. */
+/* Small green squares, grouped by string; amber and red only for cells that
+   need attention. */
 
 .grid-card { display: flex; flex-direction: column; min-height: 0; }
 .grid-scroll { overflow: auto; min-height: 0; flex: 1; }
@@ -217,21 +270,34 @@ main {
   display: grid;
   gap: 3px;
   padding: 2px;  /* room for the outline of the lowest and highest cell */
-  /* columns and --row-h are set by app.js */
+  justify-content: start;
+  /* columns and --cell-size are set by app.js */
 }
+
+.string-label {
+  grid-column: 1 / -1;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+  line-height: 1;
+  margin-top: 8px;  /* the gap between strings */
+}
+.string-label:first-child { margin-top: 0; }
 
 .module-label {
   font-size: 0.7rem;
   color: var(--muted);
   padding-right: 6px;
-  align-self: center;
   line-height: 1;
+  height: var(--cell-size, 16px);  /* rows are exactly as tall as the squares */
+  display: flex;
+  align-items: center;
 }
 
 .cell {
-  height: var(--row-h, 16px);
+  width: var(--cell-size, 16px);
+  height: var(--cell-size, 16px);
   border-radius: 3px;
-  min-width: 0;
   background: var(--cell);
   cursor: pointer;
 }
@@ -240,8 +306,9 @@ main {
 .cell.extreme { outline: 1.5px solid var(--text); outline-offset: 0; }
 
 .legend { font-size: 0.75rem; color: var(--muted); margin-top: 10px; }
-.key { display: inline-block; width: 12px; height: 9px; border-radius: 2px; margin-right: 3px; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .legend .key:not(:first-child) { margin-left: 12px; }
+.key.ok { background: var(--cell); }
 .key.outline { background: var(--cell); outline: 1.5px solid var(--text); }
 .key.amber { background: var(--amber); }
 .key.red { background: var(--red); }
@@ -298,21 +365,31 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.save-row .message { margin-left: auto; }
-.save-row button { padding: 7px 28px; }
+.save-row button { margin-left: auto; padding: 7px 28px; }
 
-/* Cards of uneven height packed into columns, so everything fits. */
-.config-cards { column-width: 250px; column-gap: 12px; }
-.config-cards .card {
-  break-inside: avoid;
-  margin-bottom: 12px;
-  display: inline-block;  /* older browsers ignore break-inside on blocks */
-  width: 100%;
+/* An even grid: cards in one row have the same height. Interfaces (and Other)
+   span the full width at the bottom, because they grow. */
+.config-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  align-items: stretch;
 }
 .config-cards .card[hidden] { display: none; }
+.config-cards .card.wide { grid-column: 1 / -1; }
 .config-cards .note { margin-bottom: 6px; }
 
 .fields { display: flex; flex-direction: column; gap: 5px; }
+/* In a wide card the fields form their own columns, so it grows wide, not tall. */
+.card.wide .fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 20px;
+}
+.config-cards .card { padding: 12px 16px; }
+.config-cards .fields { gap: 4px; }
+.config-cards input[type="number"], .config-cards input[type="text"], .config-cards select { padding: 3px 8px; }
+.card.wide .fields h3 { grid-column: 1 / -1; }
 .field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 100px;
@@ -355,9 +432,6 @@ button {
 }
 button:disabled { opacity: 0.45; cursor: default; }
 
-.message { min-height: 1.3em; font-size: 0.85rem; }
-.message.error { color: var(--red); }
-.message.ok { color: var(--green); }
 
 /* --- 9. Tooltip (hover or tap), one element placed by app.js --------------- */
 
@@ -394,6 +468,8 @@ button:disabled { opacity: 0.45; cursor: default; }
   .small-cards { grid-template-columns: 1fr; width: 200px; gap: 8px; }
   .grid-card { grid-area: grid; }
   .controls-card { grid-area: controls; align-self: start; }
+
+  .config-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
   #tab-config { overflow: auto; }  /* only if a config.yaml is very long */
 }

@@ -308,6 +308,43 @@ def test_state_lists_every_interface_with_availability_and_reason(
         stop_engine(engine)
 
 
+def test_state_has_the_soc_of_every_cell(tmp_path):
+    """Checks REQ-15: the state has each cell's SOC, module by module and
+    string by string, in the same shape as the cell voltages, for the cell
+    tooltip on the page."""
+    path = write_config(
+        tmp_path,
+        {
+            **WEBUI_ON,
+            "pack": {
+                "cells_per_module": 3,
+                "modules_in_series": 2,
+                "strings_in_parallel": 2,
+            },
+            "variation.soc_pct": 5,  # every cell gets its own SOC
+        },
+    )
+    engine = start_engine(path)
+    try:
+        for _ in range(3):
+            step(engine)
+        state = get_json(engine, "/api/state")
+
+        expected = [
+            [cell.soc_pct for cell in module.cells]
+            for string in engine.pack.strings
+            for module in string.modules
+        ]
+        got = [soc for module in state["module_cell_socs"] for soc in module]
+        want = [soc for module in expected for soc in module]
+        assert got == pytest.approx(want)
+        assert len(set(want)) == 12  # really one value per cell
+        voltages = state["result"]["module_cell_voltages"]
+        assert [len(m) for m in state["module_cell_socs"]] == [len(m) for m in voltages]
+    finally:
+        stop_engine(engine)
+
+
 # --- Config tab ---------------------------------------------------------------
 
 

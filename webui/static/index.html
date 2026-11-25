@@ -8,21 +8,21 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- 1. Header, on every tab: title, connection, and one run button that
-       shows the run state and is the Play / Stop control -->
+  <!-- 1. Header, on every tab: title, connection, and one run button. Its left
+       part shows the run state, its right part says what pressing it does. -->
   <header class="top">
     <div class="title">
       <h1>Battery Emulator</h1>
-      <span id="connection" class="connection">Connecting…</span>
+      <span id="connection" class="pill connection">Connecting…</span>
     </div>
     <button id="run-button" class="run-button" type="button" disabled>
-      <span class="dot"></span>
-      <span id="run-label">Stopped</span>
-      <span class="symbol play"></span>
+      <span class="run-state"><span class="dot"></span><span id="run-label">Stopped</span></span>
+      <span class="run-action"><span class="symbol play"></span><span id="run-verb">Play</span></span>
     </button>
   </header>
 
-  <p id="run-error" class="banner error" role="alert" hidden></p>
+  <!-- 2. Messages for both tabs: errors stay until closed, confirmations fade -->
+  <div id="messages" class="messages" role="status" aria-live="polite"></div>
 
   <nav class="tabs">
     <button type="button" class="tab" data-tab="live">Live</button>
@@ -30,7 +30,7 @@
   </nav>
 
   <main>
-    <!-- 2. Live tab -->
+    <!-- 3. Live tab -->
     <div id="tab-live" class="tab-page live" hidden>
       <section class="summary-row">
         <div class="card soc-card">
@@ -41,8 +41,8 @@
           <p id="cells-where" class="small">&nbsp;</p>
           <p id="limits-line" class="small">&nbsp;</p>
           <div class="pills">
-            <span id="pill-timeout" class="pill amber" hidden>Timeout</span>
-            <span id="pill-temp" class="pill red" hidden
+            <span id="pill-timeout" class="flag amber" hidden>Timeout</span>
+            <span id="pill-temp" class="flag red" hidden
               data-tip="temperature outside the battery's operating range, charge and discharge limits are 0">Temperature</span>
           </div>
         </div>
@@ -70,9 +70,10 @@
           <div id="grid" class="grid"></div>
         </div>
         <p class="legend">
-          <span class="key outline"></span> lowest and highest cell
-          <span class="key amber"></span> more than <span id="warn-mv">50</span> mV from the pack average
-          <span class="key red"></span> at minimum or maximum voltage
+          <span class="key ok"></span>normal
+          <span class="key outline"></span>lowest and highest
+          <span class="key amber"></span>more than <span id="warn-mv">50</span> mV from the pack average
+          <span class="key red"></span>at a voltage limit, or caused FULL or EMPTY
         </p>
       </section>
 
@@ -106,23 +107,18 @@
             <input id="hold" type="checkbox" class="switch">
           </label>
         </fieldset>
-        <p id="message" class="message" role="status"></p>
         <p class="note">Live changes only, not saved to config.yaml. They work while running.</p>
       </section>
     </div>
 
-    <!-- 3. Config tab: settings from config.yaml, editable while STOPPED -->
+    <!-- 4. Config tab: settings from config.yaml, editable while STOPPED.
+         An even grid of cards; Interfaces spans the full width at the bottom,
+         because it grows with every interface. -->
     <div id="tab-config" class="tab-page" hidden>
-      <p id="reload-banner" class="banner" hidden>
-        config.yaml changed since this page loaded it.
-        <button id="reload" type="button">Reload</button>
-      </p>
-
       <form id="config-form">
         <div class="save-row">
           <p id="config-lock" class="note">Press Stop to edit settings.</p>
           <p class="note">Saved settings are used at the next Play.</p>
-          <p id="config-message" class="message" role="status"></p>
           <button id="save" type="submit">Save</button>
         </div>
 
@@ -148,18 +144,18 @@
             <h2>Current</h2>
             <div class="fields"></div>
           </section>
-          <section class="card" data-group="interfaces">
-            <h2>Interfaces</h2>
-            <p class="note">Every section under interfaces: in config.yaml, checked by the interface itself at Play.</p>
-            <div class="fields"></div>
-          </section>
           <section class="card" data-group="webui">
             <h2>Web UI</h2>
             <p class="note">host and port take effect only after restarting the program.</p>
             <div class="fields"></div>
           </section>
-          <section class="card" data-group="other" hidden>
+          <section class="card wide" data-group="other" hidden>
             <h2>Other settings</h2>
+            <div class="fields"></div>
+          </section>
+          <section class="card wide" data-group="interfaces">
+            <h2>Interfaces</h2>
+            <p class="note">Every section under interfaces: in config.yaml, checked by the interface itself at Play.</p>
             <div class="fields"></div>
           </section>
         </fieldset>
@@ -167,7 +163,7 @@
     </div>
   </main>
 
-  <!-- 4. One tooltip box, filled and placed by app.js on hover or tap -->
+  <!-- 5. One tooltip box, filled and placed by app.js on hover or tap -->
   <div id="tip" class="tip" role="tooltip" hidden></div>
 
   <script src="app.js"></script>

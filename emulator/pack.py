@@ -409,6 +409,16 @@ def cells_of_pack(pack: Pack) -> list[Cell]:
     return [cell for string in pack.strings for cell in cells_of_string(string)]
 
 
+def module_cell_socs(pack: Pack) -> list[list[float]]:
+    """SOC of every cell, one list per module, numbered string by string:
+    the same shape as PackResult.module_cell_voltages."""
+    return [
+        [cell.soc_pct for cell in module.cells]
+        for string in pack.strings
+        for module in string.modules
+    ]
+
+
 def average_soc(pack: Pack) -> float:
     cells = cells_of_pack(pack)
     return sum(c.soc_pct for c in cells) / len(cells)
