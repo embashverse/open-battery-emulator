@@ -95,7 +95,8 @@ function setText(id, text) {
 // (area "live") or under Save (area "config"), so the page never shifts. An
 // error stays until it is closed; a confirmation fades out after CONFIRM_MS.
 // The same text is never shown twice at once, and only the newest
-// MAX_MESSAGES stay in each area.
+// MAX_MESSAGES stay in each area. Under Save the newest is on top, under the
+// run button at the bottom.
 
 // Shows a message. kind is "error" or "ok", area "live" or "config".
 // action, if given, is {label, onClick} for a button in the message (like
@@ -138,9 +139,19 @@ function notify(text, kind, area, action) {
       setTimeout(function () { message.remove(); }, 400); // after the fade
     }, CONFIRM_MS);
   }
-  box.appendChild(message);
-  while (box.children.length > MAX_MESSAGES) {
-    box.firstElementChild.remove(); // the oldest
+  if (area === "config") {
+    // The Save card's slot shows about one message, so the newest goes on
+    // top and the slot scrolls back up to it.
+    box.prepend(message);
+    while (box.children.length > MAX_MESSAGES) {
+      box.lastElementChild.remove(); // the oldest
+    }
+    box.parentElement.scrollTop = 0;
+  } else {
+    box.appendChild(message);
+    while (box.children.length > MAX_MESSAGES) {
+      box.firstElementChild.remove(); // the oldest
+    }
   }
   return message;
 }
