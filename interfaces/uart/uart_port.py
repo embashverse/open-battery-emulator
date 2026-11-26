@@ -53,7 +53,7 @@ LINE_END = "\r\n"
 CYCLE_END = LINE_END
 
 # Defaults for settings missing from interfaces.uart in config.yaml.
-DEFAULT_PORT = "/dev/serial0"  # the Pi's UART on GPIO 14 and 15
+DEFAULT_PORT = "/dev/ttyUSB0"  # a USB serial adapter; /dev/serial0 is the Pi's own UART
 DEFAULT_BAUDRATE = 115200
 DEFAULT_CYCLE_MS = 1000
 DEFAULT_MODULES = False

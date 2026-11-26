@@ -2,14 +2,14 @@
 
 ![The Live tab of the web UI while the emulated battery pack discharges](docs/images/overview.gif)
 
-## What is this
+## What it does
 
 A battery pack in software, for a Raspberry Pi or a Linux laptop. Current goes in, and the
 pack reacts like a real battery: SOC (state of charge) falls or rises, cell voltages move
 and limits change. The data goes out on CAN and UART like a real BMS (battery management
 system) would send it. Signals only, no real power.
 
-## Why
+## Why use it
 
 Test a BMS master, an inverter, a charger, or CAN and UART tools without a real battery.
 Jump to any SOC, hold the pack at one point, or reach full or empty in seconds.
@@ -21,7 +21,7 @@ Jump to any SOC, hold the pack at one point, or reach full or empty in seconds.
 - Optional: a CAN HAT or USB CAN adapter, or a USB serial adapter. Without them, use
   virtual CAN and a virtual UART.
 
-## Quick install
+## Install
 
 On a Raspberry Pi:
 
@@ -39,7 +39,7 @@ uv sync
 uv run python -m emulator.engine
 ```
 
-## Basic use
+## Use it
 
 1. Open `http://localhost:8080`, or `http://<hostname>.local:8080` for a Pi.
 2. Press **Play** (a Pi starts already running).
