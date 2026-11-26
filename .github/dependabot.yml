@@ -1,0 +1,14 @@
+# Dependabot opens pull requests when a newer version is out.
+version: 2
+updates:
+  # Actions used in .github/workflows/ (checkout, setup-uv).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # Python dependencies in pyproject.toml and uv.lock.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
