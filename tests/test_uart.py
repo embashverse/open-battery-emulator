@@ -439,7 +439,7 @@ def test_missing_settings_use_their_defaults():
         1000,
         False,
     )
-    assert uart_port.check_settings({"enabled": True}).port == "/dev/serial0"
+    assert uart_port.check_settings({"enabled": True}).port == "/dev/ttyUSB0"
 
 
 def test_too_slow_baudrate_for_the_lines_is_refused(tmp_path):
