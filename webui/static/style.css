@@ -475,7 +475,27 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 3px 20px;
 }
-.card.wide .fields h3, .card.span2 .fields h3 { grid-column: 1 / -1; }
+.card.wide .fields h3 { grid-column: 1 / -1; }
+
+/* Interfaces: a tab per interface next to the heading. Every interface's
+   fields sit in the same grid cell, on top of each other, so the box is as
+   tall as the tallest interface and switching tabs never changes the height.
+   Only the selected one is visible; the others keep their space. */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.card-head h2 { margin: 0; }
+.interface-tabs { flex-wrap: wrap; }
+span.segment { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.segment .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.segment .dot.on { background: var(--green); }
+.card.span2 .fields { display: grid; }
+.interface-page {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  visibility: hidden;
+}
+.interface-page.shown { visibility: visible; }
 .config-cards input[type="number"], .config-cards input[type="text"], .config-cards select { padding: 3px 8px; }
 .field {
   display: grid;
@@ -489,13 +509,13 @@ input[type="range"] { flex: 1; accent-color: var(--accent); min-width: 0; }
 
 .pack-summary { margin-top: 8px; font-size: 0.8rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* Save card, top aligned: everything above the button has a fixed height, so
-   the button never moves. The message slot fits three one-line messages and
-   only scrolls if they are longer. */
+/* Save card: as tall as the Interfaces card next to it. The message slot
+   takes the room left between the reminder and the status line (at least one
+   message) and scrolls when more pile up, so the button stays at the bottom. */
 .save-card { display: flex; flex-direction: column; gap: 6px; }
 .save-card h2 { margin: 0; }
-.save-card .note { margin: 0; }
-.save-card .messages-slot { height: 110px; overflow-y: auto; }
+.save-card .messages-slot { flex: 1 1 0; min-height: 36px; overflow-y: auto; }
+.reminder-note { display: block; margin-top: 2px; font-size: 0.8rem; color: var(--muted); }
 .reminder {
   display: flex;
   gap: 10px;
@@ -610,9 +630,10 @@ button:disabled { opacity: 0.45; cursor: default; }
 
   .config-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
   .config-cards .card.span2 { grid-column: 1 / span 2; }
-  .card.span2 .fields {
+  .interface-page {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
     gap: 3px 20px;
   }
 
