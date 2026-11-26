@@ -3,11 +3,6 @@
 A battery pack in software for the Raspberry Pi. Current goes in, the pack reacts like a
 real battery, and BMS style data goes out on CAN and UART. Signals only, no real power.
 
-> Early development. The emulator runs in the terminal, sends pack data on CAN and UART
-> and takes its current either simulated or from a current command on CAN or UART. An optional web page
-> shows live values, has test controls, a Play / Stop button and a Config tab to edit
-> `config.yaml`.
-
 ## What it does
 
 - Battery types as simple CSV files: add your own by copying a folder
@@ -16,22 +11,168 @@ real battery, and BMS style data goes out on CAN and UART. Signals only, no real
 - SOC, cell voltages, limits and a BMS like state machine (full, empty, charging...)
 - CAN messages defined by a DBC file you can swap for your own
 - Simple checksummed text lines on a serial port (UART)
-- All settings in one `config.yaml`, optional web UI for live values
+- All settings in one `config.yaml`, a web UI for live values, Play / Stop and settings
 
 ## What's inside
 
 - `config.yaml` all settings
 - `batteries/` battery types
-- `emulator/` the model: `cell.py`, `pack.py`, `engine.py`
+- `emulator/` the model: `cell.py`, `pack.py`, `config.py`, `engine.py`
 - `interfaces/` CAN and UART, more later
-- `webui/` optional live view, Play / Stop and settings in the browser
+- `webui/` live view, Play / Stop and settings in the browser
+- `deploy/` quick install and the services for the Pi
 
 Requirements, design and plan: [PROJECT.md](PROJECT.md)
 
-## Run it
+## Quick install (Raspberry Pi)
 
-The default `config.yaml` sends on the virtual CAN interface `vcan0`. Set it up once
-after each boot (Linux):
+1. With [Raspberry Pi Imager](https://www.raspberrypi.com/software/) write **Raspberry Pi
+   OS Lite (64-bit)**. In the OS customisation set a hostname (for example `battery`), a
+   user and password, your Wi‑Fi, and enable SSH.
+2. Boot the Pi and log in from your laptop: `ssh <user>@battery.local`
+3. Run the quick install. Once the repository is public, one command does everything:
+
+   ```
+   curl -LsSf https://raw.githubusercontent.com/embashverse/open-battery-emulator/main/deploy/bootstrap.sh | bash
+   ```
+
+   Today, from a clone (`gh repo clone embashverse/open-battery-emulator` while the
+   repository is private):
+
+   ```
+   cd open-battery-emulator
+   deploy/bootstrap.sh
+   ```
+
+`bootstrap.sh` installs git and can-utils, installs [uv](https://docs.astral.sh/uv/) if
+missing, uses the clone it is run from (or clones into `~/open-battery-emulator`), runs
+`uv sync` and `sudo deploy/install.sh`. It is safe to run twice and stops at the first
+error. At the end it prints the web UI address, like `http://battery.local:8080`: open
+it from a laptop or phone on the same network.
+
+The emulator now runs as a service and starts at every boot (details in
+[On the Pi](#on-the-pi)).
+
+## Normal install (laptop)
+
+Needs Linux, Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+
+```
+git clone https://github.com/embashverse/open-battery-emulator.git
+cd open-battery-emulator
+uv sync
+uv run python -m emulator.engine
+```
+
+Open `http://localhost:8080`. Stop it with Ctrl+C.
+
+Options: `--config other.yaml` (default `config.yaml`), `--speed 10` (10 times faster
+than real time; must be 1 while an interface such as CAN is enabled) and
+`--status-every 10` (print the status line every 10 s instead of every second).
+
+## CAN and UART
+
+CAN and UART are off by default, so a fresh install has nothing that can fail. Enable them
+in the web UI Config tab or in `config.yaml`. To try them without hardware (virtual CAN
+or a virtual UART), see [Testing without hardware](#testing-without-hardware).
+
+What is needed at boot:
+
+- **CAN on the Pi with the service:** the CAN bus is brought up automatically at every
+  boot when CAN is enabled (`can0` with its bitrate, or `vcan0` created). Nobody types
+  `ip link` there. After changing `enabled`, `channel` or `bitrate`, restart once, or
+  reboot:
+
+  ```
+  sudo systemctl restart open-battery-emulator-can open-battery-emulator
+  ```
+
+- **A CAN HAT** needs a one time device tree overlay line in `/boot/firmware/config.txt`,
+  then a reboot. For an MCP2515 HAT for example
+  `dtoverlay=mcp2515-can0,oscillator=12000000,interrupt=25`; the oscillator and
+  interrupt values depend on the HAT, check its documentation.
+- **UART** needs nothing at boot: a USB adapter (`/dev/ttyUSB0`) appears when plugged in.
+  The Pi's own UART (`/dev/serial0`, GPIO 14 and 15) needs a one time setting and the
+  `dialout` group:
+  1. `sudo raspi-config` → Interface Options → Serial Port: login shell over serial
+     **No**, serial port hardware **Yes**. Reboot.
+  2. `sudo usermod -aG dialout $USER`, then
+     `sudo systemctl restart open-battery-emulator`.
+- **On a laptop without the service:** `vcan0` must be created by hand after every reboot,
+  and a virtual UART (`socat`) is always started by hand. Both are in
+  [Testing without hardware](#testing-without-hardware).
+
+If CAN is enabled but the bus cannot be brought up (no HAT, wrong channel), the emulator
+still starts: it stays STOPPED and the web UI shows the error, so you can fix it there.
+
+## Web UI
+
+A page in the browser with two tabs. It needs no internet.
+
+- **Live:** SOC, voltage, current, state, lowest and highest cell, limits and flags, a
+  grid of every cell (hover or tap for its voltage), and controls: current source,
+  simulated current, Set SOC, Hold SOC and one Play / Stop button.
+- **Config:** every setting in `config.yaml`, grouped, with Save.
+
+To edit settings: press **Stop**, change values in **Config**, **Save** (checked first,
+comments in `config.yaml` are kept), then **Play**. If Play fails (a bad setting, a missing
+CAN channel...) it stays STOPPED and shows the error under the run button. Changes made
+with the Live controls are not saved. `webui.host` and `webui.port` take effect after a
+restart of the program.
+
+`start.autostart: true` (the default) presses Play at start, so the Pi is on the bus right
+after boot. Set `webui.enabled: false` to run without the page.
+
+> **No login.** Anyone who can reach the port can see the values, change the current,
+> stop the emulator and change `config.yaml`. Only run the web UI on a trusted network,
+> or set `host: 127.0.0.1` so only the computer itself can open it.
+
+## On the Pi
+
+Two services are installed: `open-battery-emulator-can` brings the CAN bus up at boot (as
+root, only when CAN is enabled), then `open-battery-emulator` runs the emulator as your
+normal user and restarts it if it stops with an error.
+
+```
+systemctl status open-battery-emulator      # should say "active (running)"
+journalctl -u open-battery-emulator -f      # status line every 10 s, Ctrl+C to leave
+```
+
+**Editing and developing on a quick install Pi:** `~/open-battery-emulator` is a normal
+git clone. After changing code or `config.yaml` by hand, restart the service:
+`sudo systemctl restart open-battery-emulator`.
+
+**Update:**
+
+```
+cd ~/open-battery-emulator
+git pull
+uv sync
+sudo systemctl restart open-battery-emulator
+```
+
+**Remove:** `sudo deploy/install.sh --remove` stops and disables both services and
+deletes the unit files.
+
+## Testing without hardware
+
+> These steps will move to `docs/`.
+
+### The status line
+
+```
+t=     1.0 s  DISCHARGING  I=   50.0 A  V=  315.36 V  SOC= 80.00 %  min 3.283 V (M7 C5)  max 3.287 V (M16 C6)
+```
+
+`t` emulated time, the state, `I` the current that really flowed (discharge positive),
+`V` pack voltage, `SOC` average SOC, `min` / `max` lowest and highest cell with module
+(`M`) and cell (`C`). `TIMEOUT` at the end: the current comes from an interface and no
+command arrived within `current.timeout_ms`, so the current is 0.
+
+### Virtual CAN
+
+Set `interfaces.can.enabled: true` and `channel: vcan0`. On a laptop create `vcan0` after
+every boot:
 
 ```
 sudo modprobe vcan
@@ -39,119 +180,44 @@ sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
 ```
 
-or let the project do the same from the channel in `config.yaml` (after `uv sync`):
+or let the project do the same from `config.yaml`:
+`sudo .venv/bin/python -m interfaces.can.bring_up`. On the Pi the service does this at
+boot (restart it after changing the channel, see [CAN and UART](#can-and-uart)).
 
-```
-sudo .venv/bin/python -m interfaces.can.bring_up
-```
-
-Then start the emulator:
-
-```
-uv sync
-uv run python -m emulator.engine
-```
-
-No CAN wanted? Set `interfaces.can.enabled: false` in `config.yaml`.
-
-Options: `--config other.yaml` (default `config.yaml`), `--speed 10` (run 10 times
-faster than real time; each step is still 100 ms of emulated time) and
-`--status-every 10` (print the status line every 10 s of emulated time instead of every
-second). `--speed` must be 1 while an interface such as CAN is enabled, because devices
-on the bus expect real time.
-
-### Watch the CAN frames
-
-In a second terminal, with `can-utils` installed (`sudo apt install can-utils`):
+Watch the frames (`sudo apt install can-utils`): 0x100 to 0x102 ten times a second,
+module frames from 0x200 once a second.
 
 ```
 candump vcan0
-```
-
-shows the raw frames: 0x100 to 0x102 ten times a second, module frames from 0x200 once
-a second. To see them decoded with the DBC:
-
-```
 candump vcan0 | uv run python -m cantools decode interfaces/can/battery.dbc
 ```
 
-It prints one line per second of emulated time:
+**Send a current:** set `current.source: can`. Until a command arrives it runs at 0 A
+with `TIMEOUT`. The command is 0x180 (`CurrentCommand` in the DBC): signed 16 bit, 0.1 A,
+little endian, discharge positive. 50 A = 500 = 0x01F4, sent as `F4 01`. One frame holds
+for `timeout_ms`, so repeat it:
 
 ```
-t=     1.0 s  DISCHARGING  I=   50.0 A  V=  315.36 V  SOC= 80.00 %  min 3.283 V (M7 C5)  max 3.287 V (M16 C6)
+while true; do cansend vcan0 180#F401000000000000; sleep 0.1; done   # 50 A discharge
+while true; do cansend vcan0 180#38FF000000000000; sleep 0.1; done   # 20 A charge
 ```
 
-- `t` emulated time since start
-- state: IDLE, CHARGING, DISCHARGING, FULL or EMPTY
-- `I` pack current that really flowed, discharge positive (0 inside the deadband or
-  when FULL/EMPTY blocks it)
-- `V` pack voltage
-- `SOC` average SOC of all cells
-- `min` / `max` lowest and highest cell voltage, with module (`M`) and cell (`C`) number
-- `TIMEOUT` at the end: the current comes from an interface and no command arrived within
-  `current.timeout_ms`, so the current is 0
+A value that does not fit its signal is clamped and warned about once. If the bus refuses
+frames (no other device on `can0` to acknowledge them), the emulator warns and keeps
+running.
 
-### Send a current from the terminal
+### Virtual UART
 
-Set `current.source: can` in `config.yaml` and start the emulator. Until a command
-arrives it runs at 0 A and the status line ends with `TIMEOUT`.
-
-The command is message 0x180 (`CurrentCommand` in the DBC): a signed 16 bit value in
-0.1 A, little endian, discharge positive, 8 bytes. 50 A is 500 = 0x01F4, sent as `F4 01`:
-
-```
-cansend vcan0 180#F401000000000000
-```
-
-One frame only holds for `timeout_ms` (500 ms), then the emulator falls back to 0 A, like
-a real BMS whose device has gone quiet. To keep a current flowing, send it every 100 ms:
-
-```
-while true; do cansend vcan0 180#F401000000000000; sleep 0.1; done
-```
-
-or with `cangen` from the same package: `cangen vcan0 -I 180 -L 8 -D F401000000000000 -g 100`.
-
-Charging is negative: 20 A charge is -200 = 0xFF38, sent as `38 FF`:
-`180#38FF000000000000`. Stop the loop with Ctrl+C and `TIMEOUT` comes back within
-half a second. `CurrentTimeout` in 0x100 follows the same flag.
-
-A value that does not fit its CAN signal is clamped and warned about once. If the bus
-refuses frames (for example no other device on `can0` to acknowledge them), the emulator
-warns and keeps running.
-
-Ctrl+C (or SIGTERM, which is how systemd stops it) stops it with a one line summary. A
-bad setting in `config.yaml` stops it at start with a message naming the setting.
-
-### UART
-
-The UART interface sends the pack as text lines on a serial port and takes `$CUR` lines
-as the current. The lines, fields and checksum are in PROJECT.md "UART".
-
-Turn it on in the web UI Config tab (tick `interfaces.uart.enabled`, set the port, Save,
-Play) or in `config.yaml`:
-
-```yaml
-current:
-  source: uart             # only if the current should come from the UART
-interfaces:
-  uart:
-    enabled: true
-    port: /dev/serial0     # /dev/ttyUSB0 for a USB adapter
-    baudrate: 115200
-    cycle_ms: 1000
-    modules: false         # true = one $MOD line per module too
-```
-
-**On a laptop, without hardware**, `socat` makes a pair of connected virtual serial
-ports (`sudo apt install socat picocom`). Keep it running in its own terminal:
+The lines, fields and checksum are in PROJECT.md "UART". `socat` makes a pair of
+connected virtual serial ports (`sudo apt install socat picocom`). Keep it running in its
+own terminal:
 
 ```
 socat -d -d pty,raw,echo=0,link=/tmp/ttyOBE0 pty,raw,echo=0,link=/tmp/ttyOBE1
 ```
 
-Set `port: /tmp/ttyOBE0` and start the emulator. Watch the other end with a serial
-terminal (quit picocom with Ctrl+A, then Ctrl+X):
+Set `interfaces.uart.enabled: true` and `port: /tmp/ttyOBE0`, start the emulator, and
+watch the other end (quit picocom with Ctrl+A, then Ctrl+X):
 
 ```
 picocom -b 115200 /tmp/ttyOBE1
@@ -161,204 +227,21 @@ picocom -b 115200 /tmp/ttyOBE1
 $PACK,315.36,50.0,80.00,DISCHARGING,0,0*79
 $CELL,3.283,7,5,3.287,16,6*31
 $LIM,200.0,200.0*48
-
-$PACK,315.36,50.0,79.99,DISCHARGING,0,0*7F
-$CELL,3.283,7,5,3.287,16,6*31
-$LIM,200.0,200.0*48
-
 ```
 
-Each cycle ends with an empty line, so every second shows as its own block.
-
-Send a current from another terminal. Like on CAN, one line holds for `timeout_ms`, so
-repeat it:
+**Send a current:** set `current.source: uart` and repeat the line:
 
 ```
 while true; do printf '$CUR,50*6D\r\n' > /tmp/ttyOBE1; sleep 0.1; done    # 50 A discharge
 while true; do printf '$CUR,-20*47\r\n' > /tmp/ttyOBE1; sleep 0.1; done   # 20 A charge
 ```
 
-A line with a wrong checksum or format is ignored with one warning. If the port goes
-away (a USB adapter unplugged), the emulator keeps running and reopens it every 2
-seconds. If the baudrate is too low for the lines of one cycle, Play says so.
+A line with a wrong checksum or format is ignored with one warning. If the port goes away
+(a USB adapter unplugged), the emulator keeps running and reopens it every 2 seconds.
 
-**On the Pi**, the UART is on GPIO 14 (TX, pin 8) and GPIO 15 (RX, pin 10):
+### The Pi's UART with a USB adapter
 
-1. `sudo raspi-config` → Interface Options → Serial Port: login shell over serial **No**,
-   serial port hardware **Yes**. Reboot.
-2. Let your user open serial ports, then log out and in again (the service picks it up
-   at its next start):
-
-   ```
-   sudo usermod -aG dialout $USER
-   ```
-
-3. Wire a 3.3 V USB serial adapter (for example a CP2102) to the laptop: Pi TX to adapter
-   RX, Pi RX to adapter TX, GND (pin 6) to GND. Do not connect the adapter's 3.3 V or 5 V
-   pin.
-4. On the laptop: `picocom -b 115200 /dev/ttyUSB0`.
-
-### Web UI
-
-An optional page in the browser with two tabs. Errors and confirmations appear next to
-the button that caused them: under the run button (Live) or in the Save card (Config). It
-needs no internet: everything comes from the emulator itself.
-
-- **Live:** SOC with the time to empty or full, voltage, current, state, the lowest and
-  highest cell, the spread, limits and flags (hover or tap a symbol or flag for an
-  explanation), and a grid of every cell with the strings side by side (green = normal,
-  amber = far from the pack average, red = at its minimum or maximum voltage or the cell
-  that caused FULL or EMPTY; hover or tap for its voltage and SOC). On the right: controls
-  for the current source, the simulated current (Discharge or Charge and the amps), Set
-  SOC and Hold SOC, the run time, and one run button that shows whether the emulator is
-  running and says what pressing it does (Play or Stop).
-- **Config:** every setting in `config.yaml`, grouped: battery (a list of the folders in
-  `batteries/`), pack (with a summary like `96s2p · 316 V nominal · 200 Ah`), start,
-  cell variation, current, interfaces and web UI. Every section under `interfaces:`
-  shows up here on its own. The Save card shows how many changes are not saved yet.
-
-Turn it on in `config.yaml` and start (or restart) the emulator:
-
-```yaml
-webui:
-  enabled: true
-  host: 0.0.0.0     # 0.0.0.0 = reachable from other devices, 127.0.0.1 = this computer only
-  port: 8080
-```
-
-The emulator prints `Web UI on http://0.0.0.0:8080`. Then open:
-
-- on the laptop it runs on: `http://localhost:8080`
-- on the Pi, from a laptop or phone on the same network: `http://battery.local:8080`
-  (the hostname you gave the Pi), or `http://<the Pi's IP address>:8080`
-
-Changes made with the Live controls are live only: they are **not** saved to
-`config.yaml`, so the next Play goes back to the file's values.
-
-#### Play and Stop
-
-The emulator is either **RUNNING** (green: ticking, sending on CAN) or **STOPPED** (grey:
-nothing ticks, the interfaces are closed, so no CAN frames). The web server keeps running
-in both, so the page always works.
-
-- **Stop** closes the interfaces. The last values stay on the Live tab.
-- **Play** reads the saved `config.yaml`, builds a fresh pack and opens the interfaces.
-  Time and the live controls start over. If something is wrong (a bad setting, a missing
-  CAN channel...), it stays STOPPED and the page shows the error under the run button.
-
-`start.autostart: true` (the default) presses Play at start, so the Pi service is on the
-bus straight after boot. With `autostart: false` it starts STOPPED and waits for Play.
-If Play fails at start and the web UI is on, it also waits STOPPED, so you can fix the
-setting from the browser. Ctrl+C and SIGTERM still stop everything.
-
-#### Editing settings
-
-1. Press **Stop**: settings can only be edited while STOPPED.
-2. Change values in the **Config** tab and press **Save**. The emulator checks them with
-   the same checks it runs at Play and shows the same error message if one is wrong; then
-   the file is left untouched. A good Save writes `config.yaml`, keeping its comments.
-3. Press **Play** to run with the new settings.
-
-Interface settings (like the DBC file) are checked by the interface itself, so their
-errors show up at Play, not at Save.
-
-If `config.yaml` changes on disk while the page is open (for example you edited it over
-SSH), the page shows a notice with a **Reload** button in the Save card, and refuses to
-Save over the newer file.
-
-`webui.host` and `webui.port` are saved like everything else, but only take effect after
-restarting the program (`sudo systemctl restart open-battery-emulator` on the Pi).
-
-> **No login.** Anyone who can reach the port can see the values, change the current,
-> stop the emulator and change `config.yaml`. Only run the web UI on a trusted network, or set `host: 127.0.0.1` so only the computer
-> itself can open it.
-
-## Run on a Raspberry Pi
-
-The emulator runs on the Pi as a service that starts at boot. Without CAN hardware it
-uses `vcan0`, exactly as on a laptop. Two services are installed:
-
-- `open-battery-emulator-can` runs once at boot as root and brings up the CAN channel
-  from `config.yaml` (`vcan0`: loads the module and creates it; `can0`: sets the bitrate
-  and brings it up).
-- `open-battery-emulator` then runs the emulator as your normal user, and restarts it
-  if it stops with an error.
-
-### 1. Prepare the Pi
-
-1. Install [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your laptop.
-   Choose your Pi model, **Raspberry Pi OS Lite (64-bit)** and the SD card.
-2. In the OS customisation settings, set a hostname (for example `battery`), a user name
-   and password, your Wi‑Fi, and on the Services tab enable SSH. Write the card, put it
-   in the Pi and power it on.
-3. From your laptop, log in:
-
-   ```
-   ssh <user>@battery.local
-   ```
-
-4. Install the tools (`git`, `can-utils` for `candump`/`cansend`, `gh` for GitHub) and
-   [uv](https://docs.astral.sh/uv/):
-
-   ```
-   sudo apt update && sudo apt install -y git can-utils gh
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   source ~/.bashrc
-   ```
-
-### 2. Get the code and install the services
-
-```
-gh auth login
-gh repo clone embashverse/open-battery-emulator
-cd open-battery-emulator
-uv sync
-sudo deploy/install.sh --dry-run     # optional: shows what it would do
-sudo deploy/install.sh
-```
-
-`install.sh` fills in your user name and the folder you cloned into, copies both unit
-files to `/etc/systemd/system`, enables them and starts them. The service uses the
-project's `.venv` directly, so uv is only needed for `uv sync`. Run it with `sudo` from
-your normal user: the emulator runs as that user, never as root.
-
-### 3. Check it
-
-```
-systemctl status open-battery-emulator           # should say "active (running)"
-journalctl -u open-battery-emulator -f           # status line every 10 s, Ctrl+C to leave
-candump vcan0                                    # the CAN frames
-```
-
-- **Survives a reboot:** `sudo reboot`, log in again, and `systemctl status` shows it
-  running.
-- **Restarts after a crash:** `sudo systemctl kill -s KILL open-battery-emulator`, and
-  within about 5 s `systemctl status` shows it running again with a new PID.
-  (`sudo systemctl stop open-battery-emulator` is a normal stop and is not restarted.)
-
-### Update later
-
-```
-cd ~/open-battery-emulator
-git pull
-uv sync
-sudo systemctl restart open-battery-emulator
-```
-
-After a change to `config.yaml`, the same restart picks it up. If you changed the CAN
-channel or bitrate, restart the bus step first:
-`sudo systemctl restart open-battery-emulator-can open-battery-emulator`.
-
-### Remove
-
-```
-sudo deploy/install.sh --remove
-```
-
-stops and disables both services and deletes the unit files. `vcan0` stays until the next
-reboot.
-
-## Quick start
-
-Coming with milestone M3. Needs Linux, Python 3.11+ and [uv](https://docs.astral.sh/uv/).
-No CAN hardware needed for development, it runs on virtual CAN (`vcan0`).
+After the one time setup in [CAN and UART](#can-and-uart), set `port: /dev/serial0`.
+Wire a 3.3 V USB serial adapter (for example a CP2102) to the laptop: Pi TX (GPIO 14,
+pin 8) to adapter RX, Pi RX (GPIO 15, pin 10) to adapter TX, GND (pin 6) to GND. Do not
+connect the adapter's 3.3 V or 5 V pin. On the laptop: `picocom -b 115200 /dev/ttyUSB0`.

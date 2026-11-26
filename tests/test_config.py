@@ -14,6 +14,7 @@ from emulator.config import (
     ConfigError,
     file_version,
     list_batteries,
+    read_config_file,
     read_form,
 )
 from emulator.engine import (
@@ -80,6 +81,10 @@ def test_save_keeps_comments_and_key_order_and_leaves_no_temp_file(tmp_path):
     )
     original = (REPO / "config.yaml").read_text()
     original = original.replace("autostart: true ", "autostart: false")
+    # The shipped web UI is on; the test must not open a real port.
+    original = original.replace(
+        "  enabled: true\n  host: 0.0.0.0", "  enabled: false\n  host: 0.0.0.0"
+    )
     path = tmp_path / "config.yaml"
     path.write_text(original)
     engine = start_engine(path)
@@ -238,3 +243,17 @@ def test_form_shows_autostart_even_if_the_file_has_none(tmp_path):
     """Checks REQ-37: autostart is shown with its default when missing."""
     path = write_config(tmp_path)
     assert fields_by_path(read_form(path))["start.autostart"]["value"] is True
+
+
+# --- The shipped config.yaml --------------------------------------------------
+
+
+def test_shipped_config_enables_nothing_that_needs_hardware():
+    """Checks REQ-44: the config.yaml in the repo uses simulated current, has CAN
+    and UART disabled and the web UI on, so a fresh install runs without errors."""
+    raw = read_config_file(REPO / "config.yaml")
+
+    assert raw["current"]["source"] == "simulated"
+    assert raw["interfaces"]["can"]["enabled"] is False
+    assert raw["interfaces"]["uart"]["enabled"] is False
+    assert raw["webui"]["enabled"] is True
