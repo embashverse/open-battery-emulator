@@ -12,7 +12,7 @@ after v1.0.
 | M2 | Engine | engine runs in the terminal from `config.yaml` with simulated current and prints values |
 | M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
 | M4 | Pi | runs on the Pi as a service on boot with `vcan0`, survives a reboot, restarts after a crash |
-| M5 | Web UI | M5a: optional page shows live values and changes the simulated current. M5b: Live and Config tabs, Play / Stop, settings saved to `config.yaml` (REQ-16, 17, 18, 36, 37). M5c: edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
+| M5 | Web UI | M5a: optional page shows live values and changes the simulated current. M5b: Live and Config tabs, Play / Stop, settings saved to `config.yaml` (REQ-16, 17, 18, 36, 37). M5c (CAN ID editor) is deferred to Later |
 | M6 | UART interface | frames seen and current set over a virtual serial pair (socat) on the laptop, and over the Pi's UART with a CP2102 adapter on the laptop (REQ-38 to REQ-42) |
 | v1.0 | Release | runs on the Pi with virtual CAN and a physical UART link, web UI checked from a phone, every REQ is verified (a passing test, or a manual check recorded in [Verification](verification.md)), docs complete, tagged release |
 
@@ -28,6 +28,8 @@ page.
 - per module capacity
 - load profiles from CSV
 - script that writes module frames into a DBC for decoding tools
+- CAN ID editor in the web UI (was M5c): edit the CAN message IDs and module frame IDs with checks before saving (REQ-29, in the Deferred section of Requirements)
+- physical CAN adapters (`can0`) on the Pi, checked on a real bus (REQ-19 is verified with `vcan0` only)
 - physical CAN test (MCP2515 HAT on the Pi and a CANable on a laptop, frames received and current sent over real wires)
 - isoSPI interface (needs an LTC6820 type transceiver and tight timing, likely on an MCU rather than Linux)
 - Modbus or MQTT for BESS

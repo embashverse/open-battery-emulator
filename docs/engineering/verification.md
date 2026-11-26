@@ -19,7 +19,8 @@ Rules:
 
 1. Every feature starts as a requirement on the [Requirements](requirements.md) page.
 2. Every test names the requirement it checks: `"""Checks REQ-04."""`
-   See coverage with `grep -rn "REQ-" tests/`
+   See coverage with `uv run python -m tools.traceability` (see
+   [Traceability table](#traceability-table)).
 3. One task per branch, merged by pull request. CI must be green.
 4. AI writes code, a human reviews and understands it before merging.
 5. Every requirement is verified by an automated test where possible, otherwise by a
@@ -54,9 +55,38 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged |25.11.2026 |Pass |
 | REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears in the Save card; Reload shows the new value |25.11.2026 |Pass |
 | REQ-43, REQ-44 | fresh Raspberry Pi OS Lite: quick install with `deploy/bootstrap.sh`, then `sudo reboot`, then open the printed web UI address from a phone | every step finishes, the address is printed; after the reboot the web UI opens on the phone, RUNNING, no errors shown | | |
+| REQ-19 | laptop: CAN on `vcan0`, `candump vcan0` (as in the REQ-36 row); Pi: after `sudo reboot`, `candump vcan0` (as in the REQ-31 row) | frames shown on both |19.11.2026 (Pi), 25.11.2026 (laptop) |Pass |
 
 ## Traceability table
 
-!!! note "Coming in a later step"
-    A table generated from the tests will go here: one row per requirement with the tests
-    and manual checks that cover it. Until then: `grep -rn "REQ-" tests/`.
+The table below is generated during the docs build; nothing generated is committed. A
+MkDocs hook (`hooks:` in `mkdocs.yml`, loading `tools/traceability.py`) reads three
+sources and puts the table in place of a marker line on this page:
+
+- every REQ ID and its text from [Requirements](requirements.md)
+- every test whose docstring starts with `Checks REQ-xx` (or several IDs, `Checks REQ-01,
+  REQ-02`) in `tests/`
+- the [manual checks](#manual-checks) table above, with date and result
+
+Each requirement gets one status:
+
+| Status | Meaning |
+|---|---|
+| tests | at least one test names it |
+| manual | it has manual check rows, all with a result |
+| pending | it has manual check rows, at least one without a result yet |
+| deferred | in the Deferred section of Requirements, not built yet |
+| not verifiable | no test and no manual check row |
+
+`tests/test_traceability.py` fails CI if any requirement is not verifiable, or if a test or
+manual check names a REQ ID that does not exist (REQ-45). Pending and deferred do not fail
+CI. So every new requirement needs a test with `Checks REQ-xx` or a manual check row.
+
+For a short summary in the terminal (counts per status, and which manual checks are still
+missing):
+
+```
+uv run python -m tools.traceability
+```
+
+<!-- traceability-table -->

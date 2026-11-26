@@ -32,6 +32,10 @@ theme:
 plugins:
   - search
 
+# Puts the generated traceability table on the Verification page during the build.
+hooks:
+  - tools/traceability.py
+
 markdown_extensions:
   - tables
   - admonition

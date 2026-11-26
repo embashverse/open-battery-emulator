@@ -89,13 +89,12 @@ How each is checked: [Verification](verification.md).
 | **REQ-18** | The web UI builds its choices from what exists: batteries from the folders in `batteries/`, interface sections and their settings shown generically from `config.yaml`. A new battery or interface section appears in the Config tab without changes to `webui/` code. |
 | **REQ-36** | The emulator is STOPPED (no ticks, interfaces stopped so no CAN frames, settings editable) or RUNNING (ticks and frames, settings locked), see Run states. The engine loop and the web server keep running while STOPPED. Play builds the pack and starts the interfaces from the saved `config.yaml`; if that fails, the emulator stays STOPPED and the page shows the error. Stop stops the interfaces. The page has one big Play or Stop button and shows the run state on every tab. |
 | **REQ-37** | `start.autostart` (default true) starts the engine RUNNING, so the Pi service puts the battery on the bus at boot. With `autostart: false` it starts STOPPED. |
-| **REQ-29** | The web UI lets the user change the CAN ID of each message in the DBC (PackStatus, CellStats, PackLimits, CurrentCommand) and the module frame `base_id` and `id_step` in `config.yaml`. Signal names and layouts are not editable in the UI. Save writes the IDs into the DBC file and `config.yaml`. Save is refused with a clear message if two messages share an ID, a pack message falls inside the module frame range, an ID is above 0x7FF, or the module range does not fit the pack. The UI shows the module ID range for the current pack size and notes that lower IDs have higher priority on the bus. |
 
 ## Platform
 
 | ID | Requirement |
 |---|---|
-| **REQ-19** | Runs on Linux with SocketCAN: `vcan0` on a laptop, `can0` on the Pi. |
+| **REQ-19** | Runs on Linux with SocketCAN. Verified with `vcan0` on a laptop and on the Pi; physical CAN adapters (`can0`) are a Later item in [Milestones and Later](milestones.md). |
 
 ## Deployment
 
@@ -107,3 +106,18 @@ How each is checked: [Verification](verification.md).
 | **REQ-43** | A quick install script sets up a fresh Raspberry Pi OS Lite in one run: installs git and can-utils, installs uv if missing, uses the clone it is run from or clones the repository into `~/open-battery-emulator`, runs `uv sync` and the install script. It is safe to run twice, stops at the first error with a message naming the step, and prints the web UI address with the Pi's hostname at the end. |
 | **REQ-44** | The shipped `config.yaml` turns on nothing that needs hardware: current is simulated, CAN and UART are disabled, the web UI is on. A fresh install runs without errors. |
 | **REQ-33** | The engine stops cleanly on SIGTERM as well as Ctrl+C, calling `stop()` on every interface. |
+
+## Verification
+
+| ID | Requirement |
+|---|---|
+| **REQ-45** | Every requirement is verified by at least one test whose docstring names it (`Checks REQ-xx`) or by a row in the manual checks table on [Verification](verification.md). A requirement with neither, or a test or manual check naming an ID that does not exist, fails CI. A manual check without a result yet (pending) and a deferred requirement do not fail CI. The Verification page shows a traceability table generated during the docs build. |
+
+## Deferred
+
+Requirements written down but not built yet. They keep their IDs, are not checked by CI,
+and show as deferred in the traceability table on [Verification](verification.md).
+
+| ID | Requirement |
+|---|---|
+| **REQ-29** | The web UI lets the user change the CAN ID of each message in the DBC (PackStatus, CellStats, PackLimits, CurrentCommand) and the module frame `base_id` and `id_step` in `config.yaml`. Signal names and layouts are not editable in the UI. Save writes the IDs into the DBC file and `config.yaml`. Save is refused with a clear message if two messages share an ID, a pack message falls inside the module frame range, an ID is above 0x7FF, or the module range does not fit the pack. The UI shows the module ID range for the current pack size and notes that lower IDs have higher priority on the bus. |
