@@ -5,3 +5,6 @@ __pycache__/
 .claude/settings.local.json
 # local test configs, like config_web.yaml
 config_*.yaml
+
+# Documentation site built by mkdocs
+site/

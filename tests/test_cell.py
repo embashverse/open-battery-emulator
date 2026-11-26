@@ -89,7 +89,8 @@ def test_load_reads_cell_file_and_tables(battery):
 
 
 def test_minimal_table_with_few_rows(tmp_path):
-    """Checks REQ-02 and REQ-23: the minimal table from PROJECT.md is valid."""
+    """Checks REQ-02 and REQ-23: the minimal table from docs/configuration.md is
+    valid."""
     minimal = """soc,0,25,45
 0,2.80,2.80,2.81
 10,3.19,3.20,3.20

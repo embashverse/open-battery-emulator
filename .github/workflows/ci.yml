@@ -25,3 +25,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+      - name: Build docs (fails on broken links or pages missing from the navigation)
+        run: uv run --group docs mkdocs build --strict

@@ -3,7 +3,8 @@
 install.sh --dry-run prints the unit files with the user and repo path filled
 in, without needing root and without touching systemd. These tests read that
 output. Whether systemd really starts, orders and restarts the services is
-checked by hand on the Pi (Manual checks in PROJECT.md).
+checked by hand on the Pi (Manual checks in
+docs/engineering/verification.md).
 """
 
 import os

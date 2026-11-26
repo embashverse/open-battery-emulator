@@ -1,10 +1,11 @@
 """UART interface: sends the pack result as text lines and reads the current command.
 
-Follows the interface contract in PROJECT.md: start, send, read_current, stop.
+Follows the interface contract in docs/engineering/design.md: start, send,
+read_current, stop.
 
 Every line is ASCII text like $PACK,312.45,50.0,80.00,DISCHARGING,0,0*7A, ending
 in \\r\\n. The two hex digits after * are the checksum: the XOR of every character
-between $ and * (see PROJECT.md "UART").
+between $ and * (see docs/interfaces/uart.md).
 
 Sent every cycle_ms: $PACK, $CELL, $LIM and, if modules is true, one $MOD line
 per module (REQ-39). Received: $CUR,<amps> sets the current (REQ-40).

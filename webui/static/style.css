@@ -1,5 +1,5 @@
 /* Battery Emulator web UI. Only system fonts, no files from the internet (REQ-35).
-   Style (PROJECT.md "UI style"): calm and minimal, light grey page, white cards,
+   Style (docs/engineering/design.md "UI style"): calm and minimal, light grey page, white cards,
    one blue accent for controls and the selected tab, green, amber and red only
    where something needs attention. Dark mode follows the system setting. */
 
