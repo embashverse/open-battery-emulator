@@ -182,21 +182,25 @@
             <div class="fields"></div>
           </section>
           <section class="card span2" data-group="interfaces">
-            <h2>Interfaces</h2>
+            <!-- One tab per section under interfaces:, built by app.js -->
+            <div class="card-head">
+              <h2>Interfaces</h2>
+              <div id="interface-tabs" class="segmented interface-tabs" role="tablist"></div>
+            </div>
             <p class="note">Every section under interfaces: in config.yaml, checked by the interface itself at Play.</p>
             <div class="fields"></div>
           </section>
         </fieldset>
 
-        <!-- The Save card: messages go in a fixed slot above the status line,
-             so the Save button never moves. -->
+        <!-- The Save card: messages go in a slot above the status line, which
+             takes the room left, so the Save button stays at the bottom. -->
         <section class="card save-card">
           <h2>Save</h2>
           <div class="reminder">
             <span class="icon" aria-hidden="true">!</span>
-            <span>Changes are only used after you press <b>Save</b>.</span>
+            <span>Changes are only used after you press <b>Save</b>.
+              <span class="reminder-note">Writes config.yaml and keeps its comments.</span></span>
           </div>
-          <p class="note">Writes config.yaml and keeps its comments.</p>
           <div class="messages-slot">
             <div id="config-messages" class="messages" role="status" aria-live="polite"></div>
           </div>

@@ -704,9 +704,10 @@ function readNumber(input) {
 // --- 10. Config form ---------------------------------------------------------
 // One input per field from GET /api/config. The group is the first part of
 // the path (pack.cells_per_module -> Pack). Under Interfaces, each interface
-// gets its own heading, whatever its name.
+// gets its own tab, whatever its name, and only the selected one is shown.
 
 let loadedConfig = null; // the answer of GET /api/config the form was built from
+let selectedInterface = null; // the open interface tab, kept while the page is open
 const KNOWN_GROUPS = ["battery", "pack", "start", "variation", "current", "interfaces", "webui"];
 
 async function loadConfig() {
@@ -731,7 +732,7 @@ function buildForm(config) {
   });
   document.querySelector('[data-group="other"]').hidden = true;
 
-  let lastInterface = null;
+  let page = null; // the box of the interface being filled
   config.fields.forEach(function (field) {
     const group = groupOf(field.path);
     const section = document.querySelector('[data-group="' + group + '"]');
@@ -739,22 +740,25 @@ function buildForm(config) {
     section.hidden = false;
     let label = field.path.split(".").slice(1).join(".") || field.path;
 
+    let target = box;
     if (group === "interfaces") {
       const name = field.path.split(".")[1];
-      if (name !== lastInterface) {
-        const heading = document.createElement("h3");
-        heading.textContent = name;
-        box.appendChild(heading);
-        lastInterface = name;
+      if (page === null || page.dataset.interface !== name) {
+        page = document.createElement("div");
+        page.className = "interface-page";
+        page.dataset.interface = name;
+        box.appendChild(page);
       }
+      target = page;
       label = field.path.split(".").slice(2).join(".");
     }
     if (config.restart_needed.includes(field.path)) {
       label += " (needs restart)";
     }
-    box.appendChild(makeInput(field, label, config));
+    target.appendChild(makeInput(field, label, config));
   });
 
+  buildInterfaceTabs();
   fillSourceChoices();
   showPackSummary();
   showSaveState();
@@ -803,7 +807,10 @@ function makeInput(field, label, config) {
     wrapper.classList.toggle("changed", isChanged(input));
     showSaveState();
     if (field.path.startsWith("pack.") || field.path === "battery") showPackSummary();
-    if (field.path.startsWith("interfaces.") && field.path.endsWith(".enabled")) fillSourceChoices();
+    if (field.path.startsWith("interfaces.") && field.path.endsWith(".enabled")) {
+      fillSourceChoices();
+      showInterfaceTabs();
+    }
   });
   input.addEventListener("change", function () {
     input.dispatchEvent(new Event("input"));
@@ -859,6 +866,54 @@ function fillSourceChoices() {
   const current = select.value || saved;
   if (!names.includes(saved)) names.push(saved);
   fillSelect(select, names, current);
+}
+
+// Interface tabs: one per interface box made by buildForm(), in file order.
+// They are spans, not buttons, so they still work while running, when the
+// fieldset around the form disables every button in it.
+function buildInterfaceTabs() {
+  const tabs = document.getElementById("interface-tabs");
+  tabs.innerHTML = "";
+  const names = Array.from(document.querySelectorAll(".interface-page")).map(function (page) {
+    return page.dataset.interface;
+  });
+  if (!names.includes(selectedInterface)) selectedInterface = names[0] || null;
+  names.forEach(function (name) {
+    const tab = document.createElement("span");
+    tab.className = "segment";
+    tab.setAttribute("role", "tab");
+    tab.tabIndex = 0;
+    tab.dataset.interface = name;
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    tab.appendChild(dot);
+    tab.appendChild(document.createTextNode(name));
+    tabs.appendChild(tab);
+  });
+  showInterfaceTabs();
+}
+
+// Shows the selected interface's fields, and a green dot on every tab whose
+// enabled box is ticked in the form (grey when not).
+function showInterfaceTabs() {
+  document.querySelectorAll("#interface-tabs .segment").forEach(function (tab) {
+    const name = tab.dataset.interface;
+    const selected = name === selectedInterface;
+    tab.classList.toggle("selected", selected);
+    tab.setAttribute("aria-selected", selected ? "true" : "false");
+    const enabled = settingInput("interfaces." + name + ".enabled");
+    tab.querySelector(".dot").classList.toggle("on", Boolean(enabled && enabled.checked));
+  });
+  document.querySelectorAll(".interface-page").forEach(function (page) {
+    page.classList.toggle("shown", page.dataset.interface === selectedInterface);
+  });
+}
+
+function selectInterface(event) {
+  const tab = event.target.closest("#interface-tabs .segment");
+  if (!tab) return;
+  selectedInterface = tab.dataset.interface;
+  showInterfaceTabs();
 }
 
 // For example "96s2p · 192 cells · 316 V nominal · 200 Ah · 63.2 kWh".
@@ -980,6 +1035,13 @@ function hideReloadNotice() {
 
 function setUpConfig() {
   document.getElementById("config-form").addEventListener("submit", saveConfig);
+  const tabs = document.getElementById("interface-tabs");
+  tabs.addEventListener("click", selectInterface);
+  tabs.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault(); // Space would scroll, Enter would submit
+    selectInterface(event);
+  });
   setInterval(checkConfigFile, CONFIG_CHECK_MS);
   loadConfig();
 }

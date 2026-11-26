@@ -456,3 +456,17 @@ def test_page_loads_nothing_from_the_internet():
         text = file.read_text().lower()
         assert "http://" not in text, file.name
         assert "https://" not in text, file.name
+
+
+def test_page_names_no_interface():
+    """Checks REQ-18: app.js names no interface, so every section under
+    interfaces: in config.yaml gets its own Config tab without changing the page."""
+    text = (STATIC_FOLDER / "app.js").read_text()
+    folder = Path(__file__).parent.parent / "interfaces"
+    names = [
+        p.name for p in folder.iterdir() if p.is_dir() and not p.name.startswith("_")
+    ]
+    assert names
+    for name in names:
+        for written in (f'"{name}"', f"'{name}'", f"interfaces.{name}"):
+            assert written not in text, written
