@@ -1,0 +1,75 @@
+# Documentation site. Preview locally with: uv run --group docs mkdocs serve
+site_name: Open Battery Emulator
+site_description: A battery pack in software for the Raspberry Pi, with BMS style data on CAN and UART.
+docs_dir: docs
+
+theme:
+  name: material
+  # No web fonts: the site uses the system fonts and loads nothing from Google.
+  font: false
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+  palette:
+    # Light and dark follow the system setting, with a toggle to switch by hand.
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - pymdownx.details      # collapsible boxes: ??? info "Title"
+  - pymdownx.superfences  # code blocks inside boxes and tabs
+  - pymdownx.snippets:    # --8<-- "config.yaml" includes the real file
+      base_path: ["."]
+      check_paths: true   # a missing file fails the build
+  - pymdownx.tabbed:      # content tabs: === "Raspberry Pi"
+      alternate_style: true
+  - toc:
+      permalink: true
+
+# With mkdocs build --strict these warnings fail the build: a page missing from
+# the navigation, a link to a missing page or heading.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Introduction: index.md
+  - Install: install.md
+  - Using it: using.md
+  - Configuration: configuration.md
+  - Interfaces:
+      - interfaces/index.md
+      - CAN: interfaces/can.md
+      - UART: interfaces/uart.md
+      - Testing without hardware: interfaces/testing-without-hardware.md
+  - Hardware: hardware.md
+  - Troubleshooting: troubleshooting.md
+  - Engineering:
+      - engineering/index.md
+      - Requirements: engineering/requirements.md
+      - Design: engineering/design.md
+      - Verification: engineering/verification.md
+      - Milestones and Later: engineering/milestones.md
+      - How it was built: engineering/how-it-was-built.md
