@@ -51,7 +51,8 @@ open-battery-emulator/
 ├── deploy/            run on the Pi as a service on boot
 │   ├── open-battery-emulator-can.service   brings the bus up (root)
 │   ├── open-battery-emulator.service       the emulator (normal user)
-│   └── install.sh                          installs or removes both services
+│   ├── install.sh                          installs or removes both services
+│   └── bootstrap.sh                        quick install on a fresh Pi (apt, uv, clone, install.sh)
 ├── webui/             optional: live values, Play / Stop, edit and save config.yaml
 │   ├── __init__.py    exposes start, stop
 │   ├── server.py      small web server (standard library), runs in a thread
@@ -135,21 +136,32 @@ start:
 
 variation:                 # natural spread between cells, all 0 = identical cells
   capacity_pct: 2          # each cell's capacity within +-2 % of the battery file
-  r0_pct: 5
-  soc_pct: 1
+  r0_pct: 5                # each cell's R0 within +-5 % of the battery file
+  soc_pct: 1               # each cell's start SOC within +-1 SOC point
   seed: 42                 # same seed = same pack every run
 
 current:
-  source: can        # simulated, or the name of an enabled interface (can, uart)
+  source: simulated        # simulated, or the name of an enabled interface (can, uart)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
   deadband_a: 0.5          # pack currents within +-0.5 A count as 0
 
+# CAN and UART are off by default, so a fresh install has nothing that can fail.
+# Turn them on here or in the web UI Config tab.
+# - On the Pi with the service, the CAN bus is brought up at every boot when CAN is
+#   enabled (can0 with its bitrate, or vcan0 created). After changing enabled,
+#   channel or bitrate, restart once (or reboot):
+#     sudo systemctl restart open-battery-emulator-can open-battery-emulator
+#   A CAN HAT also needs a one time dtoverlay line in the Pi's boot config (README).
+# - UART needs nothing at boot: a USB adapter appears when plugged in. The Pi's own
+#   UART needs a one time raspi-config setting and the dialout group (README).
+# - On a laptop without the service, create vcan0 by hand after every reboot, and
+#   start a virtual UART (socat) by hand (README "Testing without hardware").
 interfaces:
   can:
-    enabled: true
+    enabled: false
     driver: socketcan      # socketcan, or virtual (python-can's virtual bus, tests and CI)
-    channel: vcan0         # can0 on the Pi
+    channel: can0          # can0 for a real adapter, vcan0 for virtual CAN
     bitrate: 500000
     dbc: interfaces/can/battery.dbc
     module_frames:
@@ -159,13 +171,13 @@ interfaces:
       cycle_ms: 1000
   uart:
     enabled: false
-    port: /dev/serial0     # the Pi's UART, /dev/ttyUSB0 for a USB adapter
+    port: /dev/ttyUSB0     # a USB adapter, /dev/serial0 for the Pi's own UART
     baudrate: 115200
     cycle_ms: 1000         # a multiple of 100
     modules: false         # true = also send one $MOD line per module
 
-webui:
-  enabled: false
+webui:                     # no login: only run it on a trusted network
+  enabled: true
   host: 0.0.0.0            # 0.0.0.0 = reachable from other devices, 127.0.0.1 = this computer only
   port: 8080
 ```
@@ -377,7 +389,7 @@ same way. Settings are under `interfaces.uart` in `config.yaml`:
 | Setting | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | switch the interface on |
-| `port` | `/dev/serial0` | the Pi's UART (GPIO 14 and 15); `/dev/ttyUSB0` for a USB adapter |
+| `port` | `/dev/ttyUSB0` | a USB serial adapter; `/dev/serial0` for the Pi's own UART (GPIO 14 and 15) |
 | `baudrate` | `115200` | 8 data bits, no parity, 1 stop bit |
 | `cycle_ms` | `1000` | how often the lines are sent, a multiple of 100 |
 | `modules` | `false` | `true` also sends one `$MOD` line per module |
@@ -622,9 +634,19 @@ Deployment
   channel and bitrate from `config.yaml`. For a channel starting with `vcan` it loads the
   vcan module and creates the device; otherwise it sets the bitrate with `restart-ms 100`,
   so the controller recovers from bus off automatically, and brings the device up.
-- **REQ-31** The emulator starts at boot as a normal user (never root), only after the bus
-  is up, and restarts automatically if it stops with an error.
+- **REQ-31** The emulator starts at boot as a normal user (never root), after the bus step
+  has finished, and restarts automatically if it stops with an error. A failed bus step
+  does not block it: Play then fails, and with the web UI on the emulator stays STOPPED
+  and the page shows the error.
 - **REQ-32** One install script sets up both services on a Pi, and can also remove them.
+- **REQ-43** A quick install script sets up a fresh Raspberry Pi OS Lite in one run:
+  installs git and can-utils, installs uv if missing, uses the clone it is run from or
+  clones the repository into `~/open-battery-emulator`, runs `uv sync` and the install
+  script. It is safe to run twice, stops at the first error with a message naming the
+  step, and prints the web UI address with the Pi's hostname at the end.
+- **REQ-44** The shipped `config.yaml` turns on nothing that needs hardware: current is
+  simulated, CAN and UART are disabled, the web UI is on. A fresh install runs without
+  errors.
 - **REQ-33** The engine stops cleanly on SIGTERM as well as Ctrl+C, calling `stop()` on
   every interface.
 
@@ -699,7 +721,7 @@ Rules:
 ### Manual checks
 
 Some things only a real Pi with systemd can show: booting, rebooting, crashes. These are
-run by hand, following README "Run on a Raspberry Pi", and recorded here. The unit file
+run by hand, following README "Quick install (Raspberry Pi)", and recorded here. The unit file
 contents are also checked automatically in `tests/test_deploy.py`.
 
 | REQ | Steps | Expected | Date | Result |
@@ -716,6 +738,7 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, run button shows a grey dot and Stopped, Config fields editable. Play: frames again, run button shows a green dot and Running, fields locked |25.11.2026 |Pass |
 | REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged |25.11.2026 |Pass |
 | REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears in the Save card; Reload shows the new value |25.11.2026 |Pass |
+| REQ-43, REQ-44 | fresh Raspberry Pi OS Lite: quick install with `deploy/bootstrap.sh`, then `sudo reboot`, then open the printed web UI address from a phone | every step finishes, the address is printed; after the reboot the web UI opens on the phone, RUNNING, no errors shown | | |
 
 ## Milestones
 

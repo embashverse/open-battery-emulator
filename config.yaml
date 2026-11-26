@@ -17,16 +17,27 @@ variation:                 # natural spread between cells, all 0 = identical cel
   seed: 42                 # same seed = same pack every run
 
 current:
-  source: can        # simulated, or the name of an enabled interface (can, uart)
+  source: simulated        # simulated, or the name of an enabled interface (can, uart)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
   deadband_a: 0.5          # pack currents within +-0.5 A count as 0
 
+# CAN and UART are off by default, so a fresh install has nothing that can fail.
+# Turn them on here or in the web UI Config tab.
+# - On the Pi with the service, the CAN bus is brought up at every boot when CAN is
+#   enabled (can0 with its bitrate, or vcan0 created). After changing enabled,
+#   channel or bitrate, restart once (or reboot):
+#     sudo systemctl restart open-battery-emulator-can open-battery-emulator
+#   A CAN HAT also needs a one time dtoverlay line in the Pi's boot config (README).
+# - UART needs nothing at boot: a USB adapter appears when plugged in. The Pi's own
+#   UART needs a one time raspi-config setting and the dialout group (README).
+# - On a laptop without the service, create vcan0 by hand after every reboot, and
+#   start a virtual UART (socat) by hand (README "Testing without hardware").
 interfaces:
   can:
-    enabled: true
+    enabled: false
     driver: socketcan      # socketcan, or virtual (python-can's virtual bus, tests and CI)
-    channel: vcan0         # can0 on the Pi
+    channel: can0          # can0 for a real adapter, vcan0 for virtual CAN
     bitrate: 500000
     dbc: interfaces/can/battery.dbc
     module_frames:
@@ -36,12 +47,12 @@ interfaces:
       cycle_ms: 1000
   uart:
     enabled: false
-    port: /dev/serial0     # the Pi's UART, /dev/ttyUSB0 for a USB adapter
+    port: /dev/ttyUSB0     # a USB adapter, /dev/serial0 for the Pi's own UART
     baudrate: 115200
     cycle_ms: 1000         # a multiple of 100
     modules: false         # true = also send one $MOD line per module
 
-webui:
-  enabled: false
+webui:                     # no login: only run it on a trusted network
+  enabled: true
   host: 0.0.0.0            # 0.0.0.0 = reachable from other devices, 127.0.0.1 = this computer only
   port: 8080

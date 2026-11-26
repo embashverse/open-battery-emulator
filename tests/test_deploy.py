@@ -15,6 +15,7 @@ import pytest
 
 REPO = Path(__file__).parent.parent.resolve()
 INSTALL = REPO / "deploy" / "install.sh"
+BOOTSTRAP = REPO / "deploy" / "bootstrap.sh"
 CAN_UNIT = "open-battery-emulator-can.service"
 EMULATOR_UNIT = "open-battery-emulator.service"
 TEST_USER = "pi_user"  # stands in for the user who calls sudo
@@ -65,12 +66,14 @@ def dry_run_units() -> dict[str, dict[str, list[str]]]:
 
 def test_emulator_unit_runs_as_normal_user_after_the_bus_and_restarts():
     """Checks REQ-31, REQ-32: the emulator unit runs as the sudo user (not root),
-    needs and waits for the bus unit, restarts on failure, uses the .venv python."""
+    wants and waits for the bus unit without needing it to succeed (Wants, not
+    Requires), restarts on failure, uses the .venv python."""
     unit = dry_run_units()[EMULATOR_UNIT]
 
     assert unit["User"] == [TEST_USER]
     assert unit["User"] != ["root"]
-    assert unit["Requires"] == [CAN_UNIT]
+    assert unit["Wants"] == [CAN_UNIT]
+    assert "Requires" not in unit  # a failed bus step must not block it
     assert unit["After"] == [CAN_UNIT]
     assert unit["Restart"] == ["on-failure"]
 
@@ -94,3 +97,14 @@ def test_bus_unit_runs_bring_up_as_root_with_the_repo_config():
     assert command[0] == str(REPO / ".venv" / "bin" / "python")
     assert command[1:3] == ["-m", "interfaces.can.bring_up"]
     assert command[command.index("--config") + 1] == str(REPO / "config.yaml")
+
+
+def test_bootstrap_script_is_valid_bash():
+    """Checks REQ-43: deploy/bootstrap.sh passes bash -n (syntax only, nothing
+    is run) and is executable."""
+    result = subprocess.run(
+        ["bash", "-n", str(BOOTSTRAP)], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert os.access(BOOTSTRAP, os.X_OK)
