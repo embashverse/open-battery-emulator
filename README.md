@@ -1,10 +1,10 @@
 # Open Battery Emulator
 
 A battery pack in software for the Raspberry Pi. Current goes in, the pack reacts like a
-real battery, and BMS style data goes out on CAN. Signals only, no real power.
+real battery, and BMS style data goes out on CAN and UART. Signals only, no real power.
 
-> Early development. The emulator runs in the terminal, sends pack data on CAN and takes
-> its current either simulated or from a current command on CAN. An optional web page
+> Early development. The emulator runs in the terminal, sends pack data on CAN and UART
+> and takes its current either simulated or from a current command on CAN or UART. An optional web page
 > shows live values, has test controls, a Play / Stop button and a Config tab to edit
 > `config.yaml`.
 
@@ -12,9 +12,10 @@ real battery, and BMS style data goes out on CAN. Signals only, no real power.
 
 - Battery types as simple CSV files: add your own by copying a folder
 - Any pack size: cells per module, modules in series, strings in parallel
-- Current from a real device on CAN, or simulated
+- Current from a real device on CAN or UART, or simulated
 - SOC, cell voltages, limits and a BMS like state machine (full, empty, charging...)
 - CAN messages defined by a DBC file you can swap for your own
+- Simple checksummed text lines on a serial port (UART)
 - All settings in one `config.yaml`, optional web UI for live values
 
 ## What's inside
@@ -22,7 +23,7 @@ real battery, and BMS style data goes out on CAN. Signals only, no real power.
 - `config.yaml` all settings
 - `batteries/` battery types
 - `emulator/` the model: `cell.py`, `pack.py`, `engine.py`
-- `interfaces/` CAN today, more later
+- `interfaces/` CAN and UART, more later
 - `webui/` optional live view, Play / Stop and settings in the browser
 
 Requirements, design and plan: [PROJECT.md](PROJECT.md)
@@ -121,6 +122,74 @@ warns and keeps running.
 
 Ctrl+C (or SIGTERM, which is how systemd stops it) stops it with a one line summary. A
 bad setting in `config.yaml` stops it at start with a message naming the setting.
+
+### UART
+
+The UART interface sends the pack as text lines on a serial port and takes `$CUR` lines
+as the current. The lines, fields and checksum are in PROJECT.md "UART".
+
+Turn it on in the web UI Config tab (tick `interfaces.uart.enabled`, set the port, Save,
+Play) or in `config.yaml`:
+
+```yaml
+current:
+  source: uart             # only if the current should come from the UART
+interfaces:
+  uart:
+    enabled: true
+    port: /dev/serial0     # /dev/ttyUSB0 for a USB adapter
+    baudrate: 115200
+    cycle_ms: 1000
+    modules: false         # true = one $MOD line per module too
+```
+
+**On a laptop, without hardware**, `socat` makes a pair of connected virtual serial
+ports (`sudo apt install socat picocom`). Keep it running in its own terminal:
+
+```
+socat -d -d pty,raw,echo=0,link=/tmp/ttyOBE0 pty,raw,echo=0,link=/tmp/ttyOBE1
+```
+
+Set `port: /tmp/ttyOBE0` and start the emulator. Watch the other end with a serial
+terminal (quit picocom with Ctrl+A, then Ctrl+X):
+
+```
+picocom -b 115200 /tmp/ttyOBE1
+```
+
+```
+$PACK,315.36,50.0,80.00,DISCHARGING,0,0*79
+$CELL,3.283,7,5,3.287,16,6*31
+$LIM,200.0,200.0*48
+```
+
+Send a current from another terminal. Like on CAN, one line holds for `timeout_ms`, so
+repeat it:
+
+```
+while true; do printf '$CUR,50*6D\r\n' > /tmp/ttyOBE1; sleep 0.1; done    # 50 A discharge
+while true; do printf '$CUR,-20*47\r\n' > /tmp/ttyOBE1; sleep 0.1; done   # 20 A charge
+```
+
+A line with a wrong checksum or format is ignored with one warning. If the port goes
+away (a USB adapter unplugged), the emulator keeps running and reopens it every 2
+seconds. If the baudrate is too low for the lines of one cycle, Play says so.
+
+**On the Pi**, the UART is on GPIO 14 (TX, pin 8) and GPIO 15 (RX, pin 10):
+
+1. `sudo raspi-config` → Interface Options → Serial Port: login shell over serial **No**,
+   serial port hardware **Yes**. Reboot.
+2. Let your user open serial ports, then log out and in again (the service picks it up
+   at its next start):
+
+   ```
+   sudo usermod -aG dialout $USER
+   ```
+
+3. Wire a 3.3 V USB serial adapter (for example a CP2102) to the laptop: Pi TX to adapter
+   RX, Pi RX to adapter TX, GND (pin 6) to GND. Do not connect the adapter's 3.3 V or 5 V
+   pin.
+4. On the laptop: `picocom -b 115200 /dev/ttyUSB0`.
 
 ### Web UI
 

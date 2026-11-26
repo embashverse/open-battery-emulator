@@ -4,7 +4,7 @@
 
 A battery pack in software, running on a Raspberry Pi. Current goes in, the pack reacts
 like a real battery: SOC falls or rises, cell voltages move, limits change. Pack data goes
-out on CAN like a real BMS would send it. Signals only, no real power flows.
+out on CAN and UART like a real BMS would send it. Signals only, no real power flows.
 
 Everything is set in one file, `config.yaml`. The emulator runs on its own without a
 screen. The web UI is optional: it shows live values, lets you change the current, has
@@ -14,7 +14,7 @@ source of truth.
 Current comes from one of two kinds of source, set in `config.yaml`:
 
 - **An interface:** a real device (inverter, charger, test tool) sends the current, on
-  CAN in v1, on UART or others later.
+  CAN or UART, others later.
 - **Simulated:** the emulator uses a fixed current from `config.yaml` (or changed live in
   the web UI), so it runs even with nothing else on the bus.
 
@@ -25,7 +25,7 @@ open-battery-emulator/
 ├── README.md          how to run it
 ├── PROJECT.md         this file: idea, requirements, design, plan
 ├── AGENTS.md          rules for AI coding agents
-├── config.yaml        all settings: battery, pack, current, CAN, web UI
+├── config.yaml        all settings: battery, pack, current, CAN, UART, web UI
 ├── pyproject.toml
 ├── batteries/         one folder per battery type, all CSV
 │   └── lfp_100ah/
@@ -45,6 +45,9 @@ open-battery-emulator/
 │       ├── can_bus.py
 │       ├── bring_up.py    brings the CAN bus up at boot (run as root)
 │       └── battery.dbc    default message definitions, replace with your own
+│   └── uart/
+│       ├── __init__.py    exposes start, send, read_current, stop
+│       └── uart_port.py   text lines on a serial port
 ├── deploy/            run on the Pi as a service on boot
 │   ├── open-battery-emulator-can.service   brings the bus up (root)
 │   ├── open-battery-emulator.service       the emulator (normal user)
@@ -56,7 +59,7 @@ open-battery-emulator/
 └── tests/             test_cell.py, test_pack.py, test_engine.py, ...
 ```
 
-Add a battery: copy a folder in `batteries/`. Add an interface (UART, isoSPI, Modbus...):
+Add a battery: copy a folder in `batteries/`. Add an interface (isoSPI, Modbus...):
 add a folder in `interfaces/` and a section under `interfaces:` in `config.yaml`. Neither
 needs a change in `emulator/`, and the web UI shows both automatically.
 
@@ -137,7 +140,7 @@ variation:                 # natural spread between cells, all 0 = identical cel
   seed: 42                 # same seed = same pack every run
 
 current:
-  source: can        # simulated, or the name of an enabled interface (can)
+  source: can        # simulated, or the name of an enabled interface (can, uart)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
   deadband_a: 0.5          # pack currents within +-0.5 A count as 0
@@ -154,10 +157,12 @@ interfaces:
       id_step: 0x10        # IDs per module
       cells_per_frame: 4
       cycle_ms: 1000
-  # uart:                  # example of a future interface
-  #   enabled: false
-  #   port: /dev/ttyUSB0
-  #   baudrate: 115200
+  uart:
+    enabled: false
+    port: /dev/serial0     # the Pi's UART, /dev/ttyUSB0 for a USB adapter
+    baudrate: 115200
+    cycle_ms: 1000         # a multiple of 100
+    modules: false         # true = also send one $MOD line per module
 
 webui:
   enabled: false
@@ -175,7 +180,7 @@ Three levels, each only uses the one below it:
 | Level | File | Knows about | Does |
 |---|---|---|---|
 | High | `config.py` | `config.yaml` | reads and checks it, builds the settings form and battery list for the web UI, saves it. Only `engine.py` uses it |
-| High | `engine.py` | current source, time, run state | Play and Stop, picks the current (CAN or simulated), runs the loop, hands results to interfaces |
+| High | `engine.py` | current source, time, run state | Play and Stop, picks the current (an interface or simulated), runs the loop, hands results to interfaces |
 | Mid | `pack.py` | many cells | builds strings and modules, splits current, finds min and max cell, runs the state machine |
 | Low | `cell.py` | one cell | reads the battery CSVs, OCV lookup, SOC by coulomb counting, cell voltage, current limits |
 
@@ -199,7 +204,7 @@ setting can be fixed in the Config tab. With the web UI off it stops with the er
 Every 100 ms while RUNNING:
 
 ```
-engine.py   get current (CAN or simulated)
+engine.py   get current (an interface or simulated)
   pack.py     deadband: small currents count as 0
   pack.py     state machine: block current if FULL or EMPTY
   pack.py     split current across strings by resistance
@@ -364,6 +369,86 @@ module must fit below offset 0xF, `id_step` must be at least 0x10 so a module ne
 overlaps the next one, the highest ID must be at most 0x7FF, and no module frame may use a
 DBC message ID.
 
+## UART
+
+Pack data goes out as ASCII text lines on a serial port, and the current can come in the
+same way. Settings are under `interfaces.uart` in `config.yaml`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | switch the interface on |
+| `port` | `/dev/serial0` | the Pi's UART (GPIO 14 and 15); `/dev/ttyUSB0` for a USB adapter |
+| `baudrate` | `115200` | 8 data bits, no parity, 1 stop bit |
+| `cycle_ms` | `1000` | how often the lines are sent, a multiple of 100 |
+| `modules` | `false` | `true` also sends one `$MOD` line per module |
+
+Every line looks like `$TYPE,field,field*CS` and ends in `\r\n`. `CS` is the checksum:
+the XOR of every character between `$` and `*` (not including them), written as two
+upper case hex digits. Received checksums may be upper or lower case.
+
+Sent every `cycle_ms`, in this order:
+
+| Line | Fields |
+|---|---|
+| `$PACK` | pack voltage (V, 2 decimals), pack current (A, 1 decimal, discharge positive), SOC (%, 2 decimals), state name (IDLE, CHARGING, DISCHARGING, FULL, EMPTY), current timeout (0/1), temperature out of range (0/1) |
+| `$CELL` | lowest cell voltage (V, 3 decimals), its module, its cell, highest cell voltage (V, 3 decimals), its module, its cell |
+| `$LIM` | max charge current (A, 1 decimal), max discharge current (A, 1 decimal) |
+| `$MOD` | module number, then every cell voltage of that module in whole mV. One line per module, numbered string by string like the CAN module frames. Only if `modules` is true |
+
+Each cycle ends with one empty line (`\r\n` alone), so a serial terminal shows every
+cycle as its own block. Receivers should skip empty lines.
+
+Received:
+
+| Line | Fields |
+|---|---|
+| `$CUR` | current in A, discharge positive, a number like `50`, `-20` or `12.5`. Used when `current.source` is `uart`, with the timeout like every interface (REQ-10) |
+
+Examples:
+
+```
+$PACK,312.45,50.0,80.00,DISCHARGING,0,0*7A
+$CELL,3.287,5,7,3.301,12,2*3A
+$LIM,200.0,200.0*48
+$MOD,1,3295,3297,3301,3290,3296,3298,3293,3300,3294,3299,3292,3296*5C
+
+$CUR,50*6D
+$CUR,-20*47
+```
+
+Rules for received lines:
+
+- A line with a wrong checksum, a wrong format (no `$`, no `*CS`, an unknown type, a
+  `$CUR` without exactly one number) or longer than 128 characters (without `\r\n`) is
+  ignored, with one warning per kind of problem. The emulator never stops because of
+  input.
+- A line split across reads is put back together. If more than 128 characters arrive
+  without an end, they are thrown away up to the next `\n`.
+- Empty lines are skipped without a warning.
+- The emulator's own line types (`$PACK`, `$CELL`, `$LIM`, `$MOD`) are ignored without a
+  warning, so TX wired back to RX works.
+- 128 characters is a limit on received lines only. A `$MOD` line for a module with more
+  than about 22 cells is longer.
+
+Sending never stops the emulator. If a write or read fails (for example a USB adapter is
+unplugged), the port is closed, one warning is printed and the port is reopened every 2
+seconds; once a line is written again, one more message says sending works again. A port
+that cannot be opened at Play is an error naming `interfaces.uart.port`.
+
+**Line budget.** At Play the emulator works out the most bytes one cycle can send with
+this pack: every line built with the longest values the pack can give (pack voltage at
+`v_max` on every cell, the largest limit as a charge current, SOC 100.00, DISCHARGING,
+the highest module and cell numbers), plus one `$MOD` line per module if `modules` is
+true, each with its `\r\n`, plus the empty line that ends the cycle. On the wire one byte is 10 bits (start, 8 data, stop). If
+these bytes would use more than 80 % of what `baudrate` carries in one `cycle_ms`, Play
+stops with an error naming `interfaces.uart.baudrate`. Example, the default 96s2p pack
+(16 modules of 12 cells) at `cycle_ms: 1000`: with `modules: true` one cycle is up to
+1247 bytes, so 12470 bit/s, which needs at least 15588 baud: 19200 and up work, 9600 does
+not. With `modules: false` it is 104 bytes, so even 2400 baud works.
+
+pyserial's `loop://` port (what is written can be read back) is accepted as `port`; the
+tests use it. It holds only 4096 bytes, so use it for tests, not for long runs.
+
 ## Requirements
 
 Settings
@@ -411,7 +496,7 @@ State
   Hold SOC (freeze SOC while current flows). The web UI shows both as controls.
 
 Current input
-- **REQ-08** Current is simulated or comes from an interface (CAN in v1), as set by
+- **REQ-08** Current is simulated or comes from an interface (CAN or UART), as set by
   `current.source` in `config.yaml`: `simulated` or the name of an enabled interface
   whose `start()` says it can provide current commands. Anything else stops the start
   with an error naming `current.source`.
@@ -440,6 +525,31 @@ CAN
 - **REQ-28** If the bus refuses a frame (for example no other device acknowledges on
   `can0`), the emulator keeps running. It prints one warning when sending starts failing
   and one when it works again.
+
+UART
+- **REQ-38** The UART interface in `interfaces/uart/` follows the interface contract and
+  its `start()` returns True. Its settings are under `interfaces.uart` in `config.yaml`:
+  `enabled` (false in the shipped file), `port` (default `/dev/serial0`), `baudrate`
+  (default 115200), `cycle_ms` (default 1000, a multiple of 100) and `modules` (default
+  false). A bad setting is an error naming it; a port that cannot be opened at start is
+  an error naming `interfaces.uart.port`.
+- **REQ-39** Lines are ASCII text `$TYPE,field,...*CS` ending in `\r\n`, CS being the
+  XOR of every character between `$` and `*` as two upper case hex digits. `$PACK`,
+  `$CELL` and `$LIM` are sent every `cycle_ms` with the fields in the UART section, and
+  one `$MOD` line per module only when `modules` is true. Each cycle ends with one empty
+  line.
+- **REQ-40** A `$CUR` line sets the current when `current.source` is `uart`. A line with a
+  wrong checksum, a wrong format or longer than 128 characters is ignored with a one time
+  warning; the emulator never stops because of input. A line split across reads is put
+  back together.
+- **REQ-41** A write error never stops the emulator: one warning when it starts failing
+  and one when it works again. If the port disappears (USB adapter unplugged), the
+  interface tries to reopen it every 2 seconds.
+- **REQ-42** At start, the bytes sent per cycle for this pack (the longest possible line
+  of every type, `$MOD` included when `modules` is true, and the empty line that ends
+  the cycle, 10 bits per byte) must use at
+  most 80 % of the line in one `cycle_ms`. Otherwise the start stops with an error naming
+  `interfaces.uart.baudrate`.
 
 Structure
 - **REQ-14** Every interface follows the interface contract (`start`, `send`,
@@ -571,7 +681,7 @@ Every requirement on the left has a check on the right:
 
 | Define | Check |
 |---|---|
-| Idea | Runs on the Pi with a real device on the bus (v1.0) |
+| Idea | Runs on the Pi with virtual CAN and a physical UART link (v1.0) |
 | Requirements | Each REQ has at least one test, or a manual check where a test is not possible |
 | High level (`engine.py`) | `test_engine.py`: run many ticks from a config, check the whole result |
 | Mid level (`pack.py`) | `test_pack.py`: topology, current split, state machine |
@@ -601,6 +711,8 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | REQ-32 | `sudo deploy/install.sh --remove` | both services stopped and disabled, unit files gone from `/etc/systemd/system` |19.11.2026 |Pass |
 | REQ-15 | `webui.enabled: true`, start the emulator, open `http://localhost:8080` on the laptop | values update about twice a second, the cell grid shows every module, Set SOC / Hold SOC / simulated current change the values on the next update, SOC 150 shows an error |25.11.2026 |Pass |
 | REQ-15 | on the Pi, open `http://<hostname>.local:8080` on a phone on the same network (`<hostname>` is the name set in Raspberry Pi Imager) | page readable without zooming, controls usable, tapping a cell shows its voltage | | |
+| REQ-39, REQ-40 | laptop: `socat -d -d pty,raw,echo=0,link=/tmp/ttyOBE0 pty,raw,echo=0,link=/tmp/ttyOBE1`, `interfaces.uart` enabled with `port: /tmp/ttyOBE0` and `current.source: uart`, start the emulator, `picocom -b 115200 /tmp/ttyOBE1`, then `printf '$CUR,50*6D\r\n' > /tmp/ttyOBE1` once a second | `$PACK`, `$CELL` and `$LIM` once a second in picocom; the status line shows 50 A while the `$CUR` lines come, then TIMEOUT and 0 A within 0.5 s after they stop | | |
+| REQ-39, REQ-40, REQ-41 | Pi: UART enabled with `raspi-config`, user in `dialout`, `port: /dev/serial0`, `current.source: uart`. CP2102 adapter on the laptop, wired Pi TX (GPIO 14, pin 8) to adapter RX, Pi RX (GPIO 15, pin 10) to adapter TX, GND (pin 6) to GND. On the laptop `picocom -b 115200 /dev/ttyUSB0` and send `$CUR,50*6D` lines; unplug the adapter for a few seconds and plug it back | lines arrive on the laptop, the Pi's status line shows 50 A; unplugging does not stop the emulator, lines come back within about 2 s of plugging in | | |
 | REQ-36 | with CAN on `vcan0` and `candump vcan0` running, press Stop, then Play | Stop: frames stop, run button shows a grey dot and Stopped, Config fields editable. Play: frames again, run button shows a green dot and Running, fields locked |25.11.2026 |Pass |
 | REQ-16 | STOPPED, Config tab: change cells per module, Save, Play | "Saved" message, Live tab shows the new grid, `config.yaml` keeps its comments; a value like cells per module 0 shows the error and the file is unchanged |25.11.2026 |Pass |
 | REQ-17 | Config tab open, edit `config.yaml` in an editor and save it | within a few seconds a reload notice appears in the Save card; Reload shows the new value |25.11.2026 |Pass |
@@ -615,14 +727,15 @@ contents are also checked automatically in `tests/test_deploy.py`.
 | M3 | CAN | M3a: pack messages on `vcan0` decode with the DBC; module frames follow the pattern. M3b: 0x180 changes the current; timeout works |
 | M4 | Pi | runs on the Pi as a service on boot with `vcan0`, survives a reboot, restarts after a crash |
 | M5 | Web UI | M5a: optional page shows live values and changes the simulated current. M5b: Live and Config tabs, Play / Stop, settings saved to `config.yaml` (REQ-16, 17, 18, 36, 37). M5c: edits CAN message IDs and module frame IDs with checks before saving (REQ-29) |
-| v1.0 | Release | real hardware test with an MCP2515 HAT on the Pi and a CANable on a laptop (frames received and current sent over real wires), README quick start works, every REQ is verified: a passing test, or a manual check recorded in PROJECT.md |
+| M6 | UART interface | frames seen and current set over a virtual serial pair (socat) on the laptop, and over the Pi's UART with a CP2102 adapter on the laptop (REQ-38 to REQ-42) |
+| v1.0 | Release | runs on the Pi with virtual CAN and a physical UART link, web UI checked from a phone, every REQ is verified (a passing test, or a manual check recorded in PROJECT.md), docs complete, tagged release |
 
 ## Later
 
 Temperature model (temperature changing with current), fault injection, NMC and other
 batteries, gradual hysteresis transition (OCV moves from one curve to the other over a
 few % SOC instead of switching at once), per module capacity, load profiles from CSV, script that writes module frames
-into a DBC for decoding tools, UART interface, isoSPI interface (needs an LTC6820 type
+into a DBC for decoding tools, physical CAN test (MCP2515 HAT on the Pi and a CANable on a laptop, frames received and current sent over real wires), isoSPI interface (needs an LTC6820 type
 transceiver and tight timing, likely on an MCU rather than Linux), Modbus or MQTT for BESS, cell and module signals in the DBC by naming pattern (for
 example `Cell_M3_C7`, `ModuleTemp_M3`), filled by module and cell number, an optional
 `check(settings, pack_info)` function in the interface contract, so Save can catch
