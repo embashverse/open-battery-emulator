@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "cantools>=45.2.0",
+    "pyserial>=3.5",
     "python-can>=4.6.1",
     "ruamel-yaml>=0.19.1",
 ]

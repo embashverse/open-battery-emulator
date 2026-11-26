@@ -17,7 +17,7 @@ variation:                 # natural spread between cells, all 0 = identical cel
   seed: 42                 # same seed = same pack every run
 
 current:
-  source: can        # simulated, or the name of an enabled interface (can)
+  source: can        # simulated, or the name of an enabled interface (can, uart)
   simulated_a: 50          # discharge positive
   timeout_ms: 500
   deadband_a: 0.5          # pack currents within +-0.5 A count as 0
@@ -34,10 +34,12 @@ interfaces:
       id_step: 0x10        # IDs per module
       cells_per_frame: 4
       cycle_ms: 1000
-  # uart:                  # example of a future interface
-  #   enabled: false
-  #   port: /dev/ttyUSB0
-  #   baudrate: 115200
+  uart:
+    enabled: false
+    port: /dev/serial0     # the Pi's UART, /dev/ttyUSB0 for a USB adapter
+    baudrate: 115200
+    cycle_ms: 1000         # a multiple of 100
+    modules: false         # true = also send one $MOD line per module
 
 webui:
   enabled: false
