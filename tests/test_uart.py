@@ -149,7 +149,8 @@ def test_every_line_has_the_right_fields_and_a_valid_checksum(tmp_path):
 
 
 def test_checksum_is_the_xor_between_dollar_and_star():
-    """Checks REQ-39: the checksum of the README example line."""
+    """Checks REQ-39: the checksum of the example line in
+    docs/interfaces/uart.md."""
     assert uart_port.make_line("CUR,50") == "$CUR,50*6D\r\n"
 
 

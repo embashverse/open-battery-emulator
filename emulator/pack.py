@@ -269,7 +269,7 @@ def tick(pack: Pack, current_a: float, dt_s: float) -> PackResult:
 
 
 # --- 5. State machine ---------------------------------------------------------
-# The state table in PROJECT.md, split in two: the rows about current
+# The state table in docs/engineering/design.md, split in two: the rows about current
 # direction run before the current flows, the rows about cell voltage after.
 
 

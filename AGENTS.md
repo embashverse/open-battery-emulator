@@ -2,7 +2,9 @@
 
 Rules for AI coding agents in this repo.
 
-- Read `PROJECT.md` first. Build only what a requirement asks for.
+- Read `docs/engineering/requirements.md` and `docs/engineering/design.md` first. Build
+  only what a requirement asks for. New requirements go in
+  `docs/engineering/requirements.md`, with IDs that never change.
 - Explain what you will change and why before changing it. The owner is learning.
 - `emulator/` has three levels: `cell.py` (low), `pack.py` (mid), and the high level in
   two files: `engine.py` (runs the emulator) and `config.py` (everything about
@@ -15,7 +17,8 @@ Rules for AI coding agents in this repo.
 - Settings come from `config.yaml`, battery data from `batteries/` CSV files, CAN messages
   from the DBC file. Never hard code any of these.
 - The emulator must run without the web UI.
-- Every interface follows the contract in `PROJECT.md` (`start`, `send`, `read_current`).
+- Every interface follows the contract in `docs/engineering/design.md` (`start`, `send`,
+  `read_current`, `stop`).
   Never add interface specific code to `emulator/` or `webui/`.
 - Every test has a docstring naming its requirement: `"""Checks REQ-03."""`
 - Add a dependency only if needed, and say why.
@@ -23,3 +26,4 @@ Rules for AI coding agents in this repo.
 - If you are on main, create a branch named after the task before changing anything, and say
   which branch you created.
 - Before saying a task is done, run `uv run pytest`, `uv run ruff check .` and `uv run ruff format --check .`
+- When docs change, also run `uv run --group docs mkdocs build --strict`.

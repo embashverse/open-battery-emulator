@@ -16,6 +16,9 @@ dev = [
     "pytest",
     "ruff",
 ]
+docs = [
+    "mkdocs-material>=9.8.2",
+]
 
 [tool.uv]
 package = false

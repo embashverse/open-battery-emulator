@@ -1,6 +1,7 @@
 """CAN interface: sends the pack result on a CAN bus and reads the current command.
 
-Follows the interface contract in PROJECT.md: start, send, read_current, stop.
+Follows the interface contract in docs/engineering/design.md: start, send,
+read_current, stop.
 
 Two kinds of frames go out:
 - Pack messages, defined entirely by the DBC file (REQ-12). A message is sent
@@ -193,7 +194,7 @@ def open_bus(driver: str, channel: str, bitrate: int) -> can.BusABC:
     except (can.CanError, OSError) as error:
         raise CanSettingsError(
             f"interfaces.can.channel: cannot open {channel} with {driver} ({error}). "
-            "See README 'Run it' for setting up vcan0."
+            "See docs/interfaces/testing-without-hardware.md for setting up vcan0."
         ) from None
 
 

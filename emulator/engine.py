@@ -274,7 +274,8 @@ def save_settings(engine: Engine, value: dict) -> str:
 
 # --- 6. Interfaces ------------------------------------------------------------
 # The engine finds an interface only by its name under interfaces: in
-# config.yaml and calls only the contract functions (PROJECT.md). It never
+# config.yaml and calls only the contract functions (docs/engineering/design.md).
+# It never
 # knows what CAN or UART is (REQ-14).
 
 
@@ -291,7 +292,7 @@ def load_interface(name: str) -> ModuleType:
         if not callable(getattr(module, function, None)):
             raise ConfigError(
                 f"interfaces.{name}: interfaces/{name}/__init__.py has no "
-                f"{function}() (see the interface contract in PROJECT.md)"
+                f"{function}() (see the interface contract in docs/engineering/design.md)"
             )
     return module
 
