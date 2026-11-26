@@ -161,7 +161,14 @@ picocom -b 115200 /tmp/ttyOBE1
 $PACK,315.36,50.0,80.00,DISCHARGING,0,0*79
 $CELL,3.283,7,5,3.287,16,6*31
 $LIM,200.0,200.0*48
+
+$PACK,315.36,50.0,79.99,DISCHARGING,0,0*7F
+$CELL,3.283,7,5,3.287,16,6*31
+$LIM,200.0,200.0*48
+
 ```
+
+Each cycle ends with an empty line, so every second shows as its own block.
 
 Send a current from another terminal. Like on CAN, one line holds for `timeout_ms`, so
 repeat it:
