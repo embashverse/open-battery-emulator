@@ -22,3 +22,6 @@ package = false
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Do not auto-load pytest plugins from installed packages (for example ROS ones on
+# PYTHONPATH). This project uses no plugins, so nothing is lost.
+addopts = "--disable-plugin-autoload"
