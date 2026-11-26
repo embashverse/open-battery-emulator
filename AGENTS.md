@@ -21,6 +21,9 @@ Rules for AI coding agents in this repo.
   `read_current`, `stop`).
   Never add interface specific code to `emulator/` or `webui/`.
 - Every test has a docstring naming its requirement: `"""Checks REQ-03."""`
+- Every new requirement needs a test with `"""Checks REQ-xx."""` or a row in the manual
+  checks table in `docs/engineering/verification.md`. `tests/test_traceability.py`
+  enforces it.
 - Add a dependency only if needed, and say why.
 - Work on a branch, never commit to `main`.
 - If you are on main, create a branch named after the task before changing anything, and say
