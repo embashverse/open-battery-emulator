@@ -50,11 +50,14 @@ CAN and UART are off by default. Turn them on in the **Config** tab or in `confi
 
 ## Documentation
 
-- [Documentation](docs/index.md), starting with the introduction
-- [Configuration](docs/configuration.md): every setting
-- [Interfaces](docs/interfaces/index.md): CAN and UART
-- [Testing without hardware](docs/interfaces/testing-without-hardware.md)
-- [Troubleshooting](docs/troubleshooting.md)
+- [Documentation](https://embashverse.github.io/open-battery-emulator/), starting with the introduction
+- [Configuration](https://embashverse.github.io/open-battery-emulator/configuration/): every setting
+- [Interfaces](https://embashverse.github.io/open-battery-emulator/interfaces/): CAN and UART
+- [Testing without hardware](https://embashverse.github.io/open-battery-emulator/interfaces/testing-without-hardware/)
+- [Troubleshooting](https://embashverse.github.io/open-battery-emulator/troubleshooting/)
+
+The same pages are plain Markdown in [docs/](docs/) and can also be read on GitHub, for
+example [docs/configuration.md](docs/configuration.md).
 
 ## Status
 
@@ -63,4 +66,4 @@ adapters should work through SocketCAN, but are not tested yet.
 
 ## License
 
-License: to be decided.
+MIT, see [LICENSE](LICENSE).

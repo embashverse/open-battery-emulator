@@ -1,6 +1,8 @@
 # Documentation site. Preview locally with: uv run --group docs mkdocs serve
 site_name: Open Battery Emulator
 site_description: A battery pack in software for the Raspberry Pi, with BMS style data on CAN and UART.
+site_url: https://embashverse.github.io/open-battery-emulator/
+repo_url: https://github.com/embashverse/open-battery-emulator
 docs_dir: docs
 
 theme:

@@ -12,6 +12,7 @@ Rules for AI coding agents in this repo.
   `config.py`. Each level only uses the one below it. Do not add files there without asking.
 - Inside each file, group code in clearly commented sections in the order it runs.
 - Plain functions and dataclasses. No clever tricks. Readable beats short.
+- Dates in docs are written DD.MM.YYYY (for example 27.11.2026).
 - `emulator/` never imports from `interfaces/` or `webui/`. The engine loads `webui` by
   name with importlib, only when enabled, and passes it a handle, never the Engine.
 - Settings come from `config.yaml`, battery data from `batteries/` CSV files, CAN messages
