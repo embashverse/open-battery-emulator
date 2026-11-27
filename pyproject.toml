@@ -1,8 +1,9 @@
 [project]
 name = "open-battery-emulator"
-version = "0.0.1"
+version = "1.0.0"
 description = "A battery pack in software for the Raspberry Pi, with BMS style data on CAN."
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "cantools>=45.2.0",
